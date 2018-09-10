@@ -1,3 +1,4 @@
+#define _POSIX_C_SOURCE 1
 #include <stdlib.h>
 #include <string.h>
 #include "sway/commands.h"
