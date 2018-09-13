@@ -1,4 +1,3 @@
-#define _POSIX_C_SOURCE 199309L
 #include <strings.h>
 #include <wlr/util/log.h>
 #include "log.h"
