@@ -14,6 +14,7 @@
 #include "sway/criteria.h"
 #include "sway/commands.h"
 #include "sway/desktop/transaction.h"
+#include "sway/input/cursor.h"
 #include "sway/ipc-server.h"
 #include "sway/output.h"
 #include "sway/input/seat.h"
@@ -528,7 +529,7 @@ void view_map(struct sway_view *view, struct wlr_surface *wlr_surface) {
 
 	view->container = container_create(view);
 	if (target_sibling) {
-		container_add_sibling(target_sibling, view->container);
+		container_add_sibling(target_sibling, view->container, 1);
 	} else {
 		workspace_add_tiling(ws, view->container);
 	}
@@ -580,6 +581,11 @@ void view_unmap(struct sway_view *view) {
 	if (ws && !ws->node.destroying) {
 		arrange_workspace(ws);
 		workspace_detect_urgent(ws);
+	}
+
+	struct sway_seat *seat;
+	wl_list_for_each(seat, &input_manager->seats, link) {
+		cursor_send_pointer_motion(seat->cursor, 0, true);
 	}
 
 	transaction_commit_dirty();

@@ -7,6 +7,7 @@
 #include <strings.h>
 #include "stringop.h"
 #include "sway/input/input-manager.h"
+#include "sway/input/cursor.h"
 #include "sway/input/seat.h"
 #include "sway/ipc-server.h"
 #include "sway/output.h"
@@ -400,6 +401,7 @@ bool workspace_switch(struct sway_workspace *workspace,
 				if (&floater->node == focus) {
 					seat_set_focus(seat, NULL);
 					seat_set_focus_container(seat, floater);
+					cursor_send_pointer_motion(seat->cursor, 0, true);
 				}
 				--i;
 			}
@@ -422,6 +424,7 @@ bool workspace_switch(struct sway_workspace *workspace,
 	}
 	seat_set_focus(seat, next);
 	arrange_workspace(workspace);
+	cursor_send_pointer_motion(seat->cursor, 0, true);
 	return true;
 }
 
@@ -554,6 +557,7 @@ struct sway_container *workspace_find_container(struct sway_workspace *ws,
 }
 
 struct sway_container *workspace_wrap_children(struct sway_workspace *ws) {
+	struct sway_container *fs = ws->fullscreen;
 	struct sway_container *middle = container_create(NULL);
 	middle->layout = ws->layout;
 	while (ws->tiling->length) {
@@ -562,6 +566,7 @@ struct sway_container *workspace_wrap_children(struct sway_workspace *ws) {
 		container_add_child(middle, child);
 	}
 	workspace_add_tiling(ws, middle);
+	ws->fullscreen = fs;
 	return middle;
 }
 
@@ -690,4 +695,17 @@ void workspace_get_box(struct sway_workspace *workspace, struct wlr_box *box) {
 	box->y = workspace->y;
 	box->width = workspace->width;
 	box->height = workspace->height;
+}
+
+static void count_tiling_views(struct sway_container *con, void *data) {
+	if (con->view && !container_is_floating_or_child(con)) {
+		size_t *count = data;
+		*count += 1;
+	}
+}
+
+size_t workspace_num_tiling_views(struct sway_workspace *ws) {
+	size_t count = 0;
+	workspace_for_each_container(ws, count_tiling_views, &count);
+	return count;
 }
