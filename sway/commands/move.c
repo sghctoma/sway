@@ -149,7 +149,7 @@ static void container_move_to_container_from_direction(
 	}
 
 	wlr_log(WLR_DEBUG, "Reparenting container (perpendicular)");
-	struct sway_node *focus_inactive = seat_get_active_child(
+	struct sway_node *focus_inactive = seat_get_active_tiling_child(
 			config->handler_context.seat, &destination->node);
 	if (!focus_inactive || focus_inactive == &destination->node) {
 		// The container has no children
@@ -259,9 +259,6 @@ static void container_move_to_container(struct sway_container *container,
  * In other words, rejigger it. */
 static void workspace_rejigger(struct sway_workspace *ws,
 		struct sway_container *child, enum movement_direction move_dir) {
-	if (!sway_assert(child->parent == NULL, "Expected a root child")) {
-		return;
-	}
 	container_detach(child);
 	workspace_wrap_children(ws);
 
@@ -270,6 +267,7 @@ static void workspace_rejigger(struct sway_workspace *ws,
 	ws->layout =
 		move_dir == MOVE_LEFT || move_dir == MOVE_RIGHT ? L_HORIZ : L_VERT;
 	workspace_update_representation(ws);
+	child->width = child->height = 0;
 }
 
 static void move_out_of_tabs_stacks(struct sway_container *container,
@@ -291,7 +289,7 @@ static void move_out_of_tabs_stacks(struct sway_container *container,
 	}
 
 	wlr_log(WLR_DEBUG, "Moving out of tab/stack into a split");
-	if (container->parent) {
+	if (current->parent) {
 		struct sway_container *new_parent =
 			container_split(current->parent, layout);
 		container_insert_child(new_parent, container, offs < 0 ? 0 : 1);

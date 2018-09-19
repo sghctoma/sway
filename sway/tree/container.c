@@ -202,6 +202,9 @@ static struct sway_container *container_at_tabbed(struct sway_node *parent,
 	}
 	struct sway_seat *seat = input_manager_current_seat(input_manager);
 	list_t *children = node_get_children(parent);
+	if (!children->length) {
+		return NULL;
+	}
 
 	// Tab titles
 	int title_height = container_titlebar_height();
@@ -217,7 +220,7 @@ static struct sway_container *container_at_tabbed(struct sway_node *parent,
 	}
 
 	// Surfaces
-	struct sway_node *current = seat_get_active_child(seat, parent);
+	struct sway_node *current = seat_get_active_tiling_child(seat, parent);
 	return current ? tiling_container_at(current, lx, ly, surface, sx, sy) : NULL;
 }
 
@@ -245,7 +248,7 @@ static struct sway_container *container_at_stacked(struct sway_node *parent,
 	}
 
 	// Surfaces
-	struct sway_node *current = seat_get_active_child(seat, parent);
+	struct sway_node *current = seat_get_active_tiling_child(seat, parent);
 	return current ? tiling_container_at(current, lx, ly, surface, sx, sy) : NULL;
 }
 
