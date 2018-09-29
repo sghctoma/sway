@@ -22,6 +22,10 @@ datadir = get_option('datadir')
 sysconfdir = get_option('sysconfdir')
 prefix = get_option('prefix')
 
+if is_freebsd
+	add_project_arguments('-D_C11_SOURCE', language: 'c')
+endif
+
 swayidle_deps = []
 
 jsonc          = dependency('json-c', version: '>=0.13')
@@ -40,7 +44,7 @@ gdk_pixbuf     = dependency('gdk-pixbuf-2.0', required: false)
 pixman         = dependency('pixman-1')
 libcap         = dependency('libcap', required: false)
 libinput       = dependency('libinput', version: '>=1.6.0')
-libpam         = cc.find_library('pam')
+libpam         = cc.find_library('pam', required: false)
 systemd        = dependency('libsystemd', required: false)
 elogind        = dependency('libelogind', required: false)
 math           = cc.find_library('m')
@@ -68,6 +72,11 @@ endif
 if elogind.found()
 	conf_data.set('SWAY_IDLE_HAS_ELOGIND', true)
 	swayidle_deps += elogind
+endif
+
+if not systemd.found() and not elogind.found()
+    warning('The sway binary must be setuid when compiled without (e)logind')
+    warning('You must do this manually post-install: chmod a+s /path/to/sway')
 endif
 
 scdoc = find_program('scdoc', required: false)
@@ -133,9 +142,9 @@ subdir('swaymsg')
 subdir('client')
 subdir('swaybg')
 subdir('swaybar')
-subdir('swaylock')
 subdir('swayidle')
 subdir('swaynag')
+subdir('swaylock')
 
 config = configuration_data()
 config.set('sysconfdir', join_paths(prefix, sysconfdir))
