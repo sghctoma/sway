@@ -77,8 +77,10 @@ static struct cmd_handler handlers[] = {
 	{ "bar", cmd_bar },
 	{ "bindcode", cmd_bindcode },
 	{ "bindsym", cmd_bindsym },
+	{ "client.background", cmd_client_noop },
 	{ "client.focused", cmd_client_focused },
 	{ "client.focused_inactive", cmd_client_focused_inactive },
+	{ "client.placeholder", cmd_client_noop },
 	{ "client.unfocused", cmd_client_unfocused },
 	{ "client.urgent", cmd_client_urgent },
 	{ "default_border", cmd_default_border },
@@ -107,9 +109,12 @@ static struct cmd_handler handlers[] = {
 	{ "new_window", cmd_default_border },
 	{ "no_focus", cmd_no_focus },
 	{ "output", cmd_output },
+	{ "popup_during_fullscreen", cmd_popup_during_fullscreen },
+	{ "raise_floating", cmd_raise_floating },
 	{ "seat", cmd_seat },
 	{ "set", cmd_set },
 	{ "show_marks", cmd_show_marks },
+	{ "smart_borders", cmd_smart_borders },
 	{ "smart_gaps", cmd_smart_gaps },
 	{ "tiling_drag", cmd_tiling_drag },
 	{ "workspace", cmd_workspace },
@@ -391,7 +396,11 @@ struct cmd_results *config_command(char *exec) {
 	// Var replacement, for all but first argument of set
 	// TODO commands
 	for (i = handler->handle == cmd_set ? 2 : 1; i < argc; ++i) {
-		if (*argv[i] == '\"' || *argv[i] == '\'') {
+		if (handler->handle != cmd_exec && handler->handle != cmd_exec_always
+				&& handler->handle != cmd_bindsym
+				&& handler->handle != cmd_bindcode
+				&& handler->handle != cmd_set
+				&& (*argv[i] == '\"' || *argv[i] == '\'')) {
 			strip_quotes(argv[i]);
 		}
 		argv[i] = do_var_replacement(argv[i]);

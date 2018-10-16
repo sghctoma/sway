@@ -16,6 +16,7 @@
 #include "stringop.h"
 #include "list.h"
 #include "log.h"
+#include "util.h"
 
 static void terminate_swaybar(pid_t pid) {
 	wlr_log(WLR_DEBUG, "Terminating swaybar %d", pid);
@@ -26,6 +27,14 @@ static void terminate_swaybar(pid_t pid) {
 		int status;
 		waitpid(pid, &status, 0);
 	}
+}
+
+void free_bar_binding(struct bar_binding *binding) {
+	if (!binding) {
+		return;
+	}
+	free(binding->command);
+	free(binding);
 }
 
 void free_bar_config(struct bar_config *bar) {
@@ -39,7 +48,10 @@ void free_bar_config(struct bar_config *bar) {
 	free(bar->status_command);
 	free(bar->font);
 	free(bar->separator_symbol);
-	// TODO: Free mouse bindings
+	for (int i = 0; i < bar->bindings->length; i++) {
+		struct bar_binding *binding = bar->bindings->items[i];
+		free_bar_binding(binding);
+	}
 	list_free(bar->bindings);
 	if (bar->outputs) {
 		free_flat_list(bar->outputs);
@@ -90,6 +102,7 @@ struct bar_config *default_bar_config(void) {
 	bar->binding_mode_indicator = true;
 	bar->verbose = false;
 	bar->pid = 0;
+	bar->modifier = get_modifier_mask_by_name("Mod4");
 	if (!(bar->mode = strdup("dock"))) {
 	       goto cleanup;
 	}
@@ -97,10 +110,6 @@ struct bar_config *default_bar_config(void) {
 		goto cleanup;
 	}
 	if (!(bar->bindings = create_list())) {
-		goto cleanup;
-	}
-	if (!(bar->status_command =
-			strdup("while date +'%Y-%m-%d %l:%M:%S %p'; do sleep 1; done"))) {
 		goto cleanup;
 	}
 	// set default colors
@@ -219,13 +228,17 @@ static void invoke_swaybar(struct bar_config *bar) {
 	close(filedes[1]);
 }
 
+void load_swaybar(struct bar_config *bar) {
+	if (bar->pid != 0) {
+		terminate_swaybar(bar->pid);
+	}
+	wlr_log(WLR_DEBUG, "Invoking swaybar for bar id '%s'", bar->id);
+	invoke_swaybar(bar);
+}
+
 void load_swaybars(void) {
 	for (int i = 0; i < config->bars->length; ++i) {
 		struct bar_config *bar = config->bars->items[i];
-		if (bar->pid != 0) {
-			terminate_swaybar(bar->pid);
-		}
-		wlr_log(WLR_DEBUG, "Invoking swaybar for bar id '%s'", bar->id);
-		invoke_swaybar(bar);
+		load_swaybar(bar);
 	}
 }

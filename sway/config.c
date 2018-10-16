@@ -73,8 +73,6 @@ void free_config(struct sway_config *config) {
 
 	memset(&config->handler_context, 0, sizeof(config->handler_context));
 
-	free(config->swaynag_command);
-
 	// TODO: handle all currently unhandled lists as we add implementations
 	if (config->symbols) {
 		for (int i = 0; i < config->symbols->length; ++i) {
@@ -136,6 +134,8 @@ void free_config(struct sway_config *config) {
 	free(config->floating_scroll_left_cmd);
 	free(config->floating_scroll_right_cmd);
 	free(config->font);
+	free(config->swaybg_command);
+	free(config->swaynag_command);
 	free((char *)config->current_config_path);
 	free((char *)config->current_config);
 	free(config);
@@ -166,7 +166,7 @@ static void set_color(float dest[static 4], uint32_t color) {
 }
 
 static void config_defaults(struct sway_config *config) {
-	config->swaynag_command = strdup("swaynag");
+	if (!(config->swaynag_command = strdup("swaynag"))) goto cleanup;
 	config->swaynag_config_errors = (struct swaynag_instance){
 		.args = "--type error "
 			"--message 'There are errors in your config file' "
@@ -212,6 +212,7 @@ static void config_defaults(struct sway_config *config) {
 	if (!(config->font = strdup("monospace 10"))) goto cleanup;
 	config->font_height = 17; // height of monospace 10
 	config->urgent_timeout = 500;
+	config->popup_during_fullscreen = POPUP_SMART;
 
 	// floating view
 	config->floating_maximum_width = 0;
@@ -221,7 +222,8 @@ static void config_defaults(struct sway_config *config) {
 
 	// Flags
 	config->focus_follows_mouse = true;
-	config->mouse_warping = true;
+	config->raise_floating = true;
+	config->mouse_warping = WARP_OUTPUT;
 	config->focus_wrapping = WRAP_YES;
 	config->validating = false;
 	config->reloading = false;
@@ -232,12 +234,13 @@ static void config_defaults(struct sway_config *config) {
 	config->show_marks = true;
 	config->tiling_drag = true;
 
-	config->edge_gaps = true;
 	config->smart_gaps = false;
 	config->gaps_inner = 0;
 	config->gaps_outer = 0;
 
 	if (!(config->active_bar_modifiers = create_list())) goto cleanup;
+
+	if (!(config->swaybg_command = strdup("swaybg"))) goto cleanup;
 
 	if (!(config->config_chain = create_list())) goto cleanup;
 	config->current_config_path = NULL;
@@ -249,6 +252,7 @@ static void config_defaults(struct sway_config *config) {
 	config->border_thickness = 2;
 	config->floating_border_thickness = 2;
 	config->hide_edge_borders = E_NONE;
+	config->saved_edge_borders = E_NONE;
 
 	// border colors
 	set_color(config->border_colors.focused.border, 0x4C7899);
@@ -454,6 +458,12 @@ bool load_main_config(const char *file, bool is_active, bool validating) {
 
 	success = success && load_config(path, config,
 			&config->swaynag_config_errors);
+
+	if (validating) {
+		free_config(config);
+		config = old_config;
+		return success;
+	}
 
 	if (is_active) {
 		for (int i = 0; i < config->output_configs->length; i++) {

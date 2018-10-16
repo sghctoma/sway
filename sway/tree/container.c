@@ -151,10 +151,10 @@ struct sway_container *container_find_child(struct sway_container *container,
 	return NULL;
 }
 
-static void surface_at_view(struct sway_container *con, double lx, double ly,
+static struct sway_container *surface_at_view(struct sway_container *con, double lx, double ly,
 		struct wlr_surface **surface, double *sx, double *sy) {
 	if (!sway_assert(con->view, "Expected a view")) {
-		return;
+		return NULL;
 	}
 	struct sway_view *view = con->view;
 	double view_sx = lx - view->x + view->geometry.x;
@@ -184,7 +184,9 @@ static void surface_at_view(struct sway_container *con, double lx, double ly,
 		*sx = _sx;
 		*sy = _sy;
 		*surface = _surface;
+		return con;
 	}
+	return NULL;
 }
 
 /**
@@ -355,37 +357,27 @@ struct sway_container *container_at(struct sway_workspace *workspace,
 		double lx, double ly,
 		struct wlr_surface **surface, double *sx, double *sy) {
 	struct sway_container *c;
-	// Focused view's popups
+
 	struct sway_seat *seat = input_manager_current_seat(input_manager);
 	struct sway_container *focus = seat_get_focused_container(seat);
 	bool is_floating = focus && container_is_floating_or_child(focus);
 	// Focused view's popups
 	if (focus && focus->view) {
-		surface_at_view(focus, lx, ly, surface, sx, sy);
-		if (*surface && surface_is_popup(*surface)) {
-			return focus;
+		c = surface_at_view(focus, lx, ly, surface, sx, sy);
+		if (c && surface_is_popup(*surface)) {
+			return c;
 		}
 		*surface = NULL;
 	}
-	// If focused is floating, focused view's non-popups
-	if (focus && focus->view && is_floating) {
-		surface_at_view(focus, lx, ly, surface, sx, sy);
-		if (*surface) {
-			return focus;
-		}
-		*surface = NULL;
-	}
-	// Floating (non-focused)
-	if ((c = floating_container_at(lx, ly, surface, sx, sy))) {
+	// Floating
+	if ((c = floating_container_at(lx, ly, surface ,sx ,sy))) {
 		return c;
 	}
-	// If focused is tiling, focused view's non-popups
+	// Tiling (focused)
 	if (focus && focus->view && !is_floating) {
-		surface_at_view(focus, lx, ly, surface, sx, sy);
-		if (*surface) {
-			return focus;
+		if ((c = surface_at_view(focus, lx, ly, surface, sx, sy))) {
+			return c;
 		}
-		*surface = NULL;
 	}
 	// Tiling (non-focused)
 	if ((c = tiling_container_at(&workspace->node, lx, ly, surface, sx, sy))) {
@@ -593,7 +585,7 @@ void container_update_representation(struct sway_container *con) {
 	}
 }
 
-size_t container_titlebar_height() {
+size_t container_titlebar_height(void) {
 	return config->font_height + TITLEBAR_V_PADDING * 2;
 }
 
@@ -669,6 +661,9 @@ void container_set_floating(struct sway_container *container, bool enable) {
 		container_init_floating(container);
 		if (container->view) {
 			view_set_tiled(container->view, false);
+			if (container->view->using_csd) {
+				container->view->border = B_CSD;
+			}
 		}
 		if (old_parent) {
 			container_reap_empty(old_parent);
@@ -695,6 +690,9 @@ void container_set_floating(struct sway_container *container, bool enable) {
 		}
 		if (container->view) {
 			view_set_tiled(container->view, true);
+			if (container->view->using_csd) {
+				container->view->border = container->view->saved_border;
+			}
 		}
 		container->is_sticky = false;
 	}
@@ -715,7 +713,7 @@ void container_set_geometry_from_floating_view(struct sway_container *con) {
 	size_t border_width = 0;
 	size_t top = 0;
 
-	if (!view->using_csd) {
+	if (view->border != B_CSD) {
 		border_width = view->border_thickness * (view->border != B_NONE);
 		top = view->border == B_NORMAL ?
 			container_titlebar_height() : border_width;
@@ -823,9 +821,16 @@ void container_floating_move_to_center(struct sway_container *con) {
 		return;
 	}
 	struct sway_workspace *ws = con->workspace;
+	bool full = con->is_fullscreen;
+	if (full) {
+		container_set_fullscreen(con, false);
+	}
 	double new_lx = ws->x + (ws->width - con->width) / 2;
 	double new_ly = ws->y + (ws->height - con->height) / 2;
 	container_floating_translate(con, new_lx - con->x, new_ly - con->y);
+	if (full) {
+		container_set_fullscreen(con, true);
+	}
 }
 
 static bool find_urgent_iterator(struct sway_container *con, void *data) {
@@ -1014,15 +1019,33 @@ void container_add_gaps(struct sway_container *c) {
 	if (!c->view && c->layout != L_TABBED && c->layout != L_STACKED) {
 		return;
 	}
-	// Children of tabbed/stacked containers re-use the gaps of the container
-	enum sway_container_layout layout = container_parent_layout(c);
-	if (layout == L_TABBED || layout == L_STACKED) {
-		return;
+	// Descendants of tabbed/stacked containers re-use the gaps of the container
+	struct sway_container *temp = c;
+	while (temp) {
+		enum sway_container_layout layout = container_parent_layout(temp);
+		if (layout == L_TABBED || layout == L_STACKED) {
+			return;
+		}
+		temp = temp->parent;
+	}
+	// If smart gaps is on, don't add gaps if there is only one view visible
+	if (config->smart_gaps) {
+		struct sway_view *view = c->view;
+		if (!view) {
+			struct sway_seat *seat =
+				input_manager_get_default_seat(input_manager);
+			struct sway_container *focus =
+				seat_get_focus_inactive_view(seat, &c->node);
+			view = focus ? focus->view : NULL;
+		}
+		if (view && view_is_only_visible(view)) {
+			return;
+		}
 	}
 
 	struct sway_workspace *ws = c->workspace;
 
-	c->current_gaps = ws->has_gaps ? ws->gaps_inner : config->gaps_inner;
+	c->current_gaps = ws->gaps_inner;
 	c->x += c->current_gaps;
 	c->y += c->current_gaps;
 	c->width -= 2 * c->current_gaps;
@@ -1184,4 +1207,11 @@ struct sway_container *container_split(struct sway_container *child,
 	}
 
 	return cont;
+}
+
+bool container_is_transient_for(struct sway_container *child,
+		struct sway_container *ancestor) {
+	return config->popup_during_fullscreen == POPUP_SMART &&
+		child->view && ancestor->view &&
+		view_is_transient_for(child->view, ancestor->view);
 }

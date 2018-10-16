@@ -296,11 +296,15 @@ static uint32_t render_status_line(cairo_t *cairo,
 
 static uint32_t render_binding_mode_indicator(cairo_t *cairo,
 		struct swaybar_output *output, double x) {
+	const char *mode = output->bar->mode;
+	if (!mode) {
+		return 0;
+	}
+
 	struct swaybar_config *config = output->bar->config;
-	const char *mode = config->mode;
 	int text_width, text_height;
 	get_text_size(cairo, config->font, &text_width, &text_height, NULL,
-			output->scale, config->mode_pango_markup,
+			output->scale, output->bar->mode_pango_markup,
 			"%s", mode);
 
 	int ws_vertical_padding = WS_VERTICAL_PADDING * output->scale;
@@ -333,8 +337,8 @@ static uint32_t render_binding_mode_indicator(cairo_t *cairo,
 	double text_y = height / 2.0 - text_height / 2.0;
 	cairo_set_source_u32(cairo, config->colors.binding_mode.text);
 	cairo_move_to(cairo, x + width / 2 - text_width / 2, (int)floor(text_y));
-	pango_printf(cairo, config->font, output->scale, config->mode_pango_markup,
-			"%s", mode);
+	pango_printf(cairo, config->font, output->scale,
+			output->bar->mode_pango_markup, "%s", mode);
 	return output->height;
 }
 
@@ -465,7 +469,7 @@ static uint32_t render_to_cairo(cairo_t *cairo, struct swaybar_output *output) {
 			max_height = h > max_height ? h : max_height;
 		}
 	}
-	if (config->binding_mode_indicator && config->mode) {
+	if (config->binding_mode_indicator) {
 		uint32_t h = render_binding_mode_indicator(cairo, output, x);
 		max_height = h > max_height ? h : max_height;
 	}
@@ -473,17 +477,28 @@ static uint32_t render_to_cairo(cairo_t *cairo, struct swaybar_output *output) {
 	return max_height > output->height ? max_height : output->height;
 }
 
-void render_frame(struct swaybar *bar, struct swaybar_output *output) {
-	assert(output->surface != NULL);
-
-	struct swaybar_hotspot *hotspot, *tmp;
-	wl_list_for_each_safe(hotspot, tmp, &output->hotspots, link) {
-		if (hotspot->destroy) {
-			hotspot->destroy(hotspot->data);
-		}
-		wl_list_remove(&hotspot->link);
-		free(hotspot);
+static void output_frame_handle_done(void *data, struct wl_callback *callback,
+		uint32_t time) {
+	wl_callback_destroy(callback);
+	struct swaybar_output *output = data;
+	output->frame_scheduled = false;
+	if (output->dirty) {
+		render_frame(output);
+		output->dirty = false;
 	}
+}
+
+static const struct wl_callback_listener output_frame_listener = {
+	.done = output_frame_handle_done
+};
+
+void render_frame(struct swaybar_output *output) {
+	assert(output->surface != NULL);
+	if (!output->layer_surface) {
+		return;
+	}
+
+	free_hotspots(&output->hotspots);
 
 	cairo_surface_t *recorder = cairo_recording_surface_create(
 			CAIRO_CONTENT_COLOR_ALPHA, NULL);
@@ -504,10 +519,12 @@ void render_frame(struct swaybar *bar, struct swaybar_output *output) {
 	if (config_height >= 0 && height < (uint32_t)config_height) {
 		height = config_height;
 	}
-	if (height != output->height) {
+	if (height != output->height || output->width == 0) {
 		// Reconfigure surface
 		zwlr_layer_surface_v1_set_size(output->layer_surface, 0, height);
-		zwlr_layer_surface_v1_set_exclusive_zone(output->layer_surface, height);
+		if (strcmp(output->bar->config->mode, "dock") == 0) {
+			zwlr_layer_surface_v1_set_exclusive_zone(output->layer_surface, height);
+		}
 		// TODO: this could infinite loop if the compositor assigns us a
 		// different height than what we asked for
 		wl_surface_commit(output->surface);
@@ -518,6 +535,8 @@ void render_frame(struct swaybar *bar, struct swaybar_output *output) {
 				output->width * output->scale,
 				output->height * output->scale);
 		if (!output->current_buffer) {
+			cairo_surface_destroy(recorder);
+			cairo_destroy(cairo);
 			return;
 		}
 		cairo_t *shm = output->current_buffer->cairo;
@@ -535,6 +554,11 @@ void render_frame(struct swaybar *bar, struct swaybar_output *output) {
 				output->current_buffer->buffer, 0, 0);
 		wl_surface_damage(output->surface, 0, 0,
 				output->width, output->height);
+
+		struct wl_callback *frame_callback = wl_surface_frame(output->surface);
+		wl_callback_add_listener(frame_callback, &output_frame_listener, output);
+		output->frame_scheduled = true;
+
 		wl_surface_commit(output->surface);
 	}
 	cairo_surface_destroy(recorder);

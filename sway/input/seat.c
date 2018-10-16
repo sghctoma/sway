@@ -144,32 +144,48 @@ static void handle_seat_node_destroy(struct wl_listener *listener, void *data) {
 	struct sway_node *parent = node_get_parent(node);
 	struct sway_node *focus = seat_get_focus(seat);
 
-	bool set_focus =
-		focus != NULL &&
-		(focus == node || node_has_ancestor(focus, node)) &&
-		node->type == N_CONTAINER;
+	if (node->type == N_WORKSPACE) {
+		seat_node_destroy(seat_node);
+		return;
+	}
+
+	// Even though the container being destroyed might be nowhere near the
+	// focused container, we still need to set focus_inactive on a sibling of
+	// the container being destroyed.
+	bool needs_new_focus = focus &&
+		(focus == node || node_has_ancestor(focus, node));
 
 	seat_node_destroy(seat_node);
 
-	if (set_focus) {
-		struct sway_node *next_focus = NULL;
-		while (next_focus == NULL) {
-			struct sway_container *con =
-				seat_get_focus_inactive_view(seat, parent);
-			next_focus = con ? &con->node : NULL;
+	if (!parent) {
+		// Destroying a container that is no longer in the tree
+		return;
+	}
 
-			if (next_focus == NULL && parent->type == N_WORKSPACE) {
-				next_focus = parent;
-				break;
-			}
+	// Find new focus_inactive (ie. sibling, or workspace if no siblings left)
+	struct sway_node *next_focus = NULL;
+	while (next_focus == NULL) {
+		struct sway_container *con =
+			seat_get_focus_inactive_view(seat, parent);
+		next_focus = con ? &con->node : NULL;
 
-			parent = node_get_parent(parent);
+		if (next_focus == NULL && parent->type == N_WORKSPACE) {
+			next_focus = parent;
+			break;
 		}
 
-		// the structure change might have caused it to move up to the top of
+		parent = node_get_parent(parent);
+	}
+
+	if (needs_new_focus) {
+		// The structure change might have caused it to move up to the top of
 		// the focus stack without sending focus notifications to the view
 		seat_send_focus(next_focus, seat);
 		seat_set_focus(seat, next_focus);
+	} else {
+		// Setting focus_inactive
+		seat_set_focus_warp(seat, next_focus, false, false);
+		seat_set_focus_warp(seat, focus, false, false);
 	}
 }
 
@@ -595,6 +611,18 @@ static int handle_urgent_timeout(void *data) {
 	return 0;
 }
 
+static void container_raise_floating(struct sway_container *con) {
+	// Bring container to front by putting it at the end of the floating list.
+	struct sway_container *floater = con;
+	while (floater->parent) {
+		floater = floater->parent;
+	}
+	if (container_is_floating(floater)) {
+		list_move_to_end(floater->workspace->floating, floater);
+		node_set_dirty(&floater->workspace->node);
+	}
+}
+
 void seat_set_focus_warp(struct sway_seat *seat, struct sway_node *node,
 		bool warp, bool notify) {
 	if (seat->focused_layer) {
@@ -627,7 +655,10 @@ void seat_set_focus_warp(struct sway_seat *seat, struct sway_node *node,
 	// Deny setting focus to a view which is hidden by a fullscreen container
 	if (new_workspace && new_workspace->fullscreen && container &&
 			!container_is_fullscreen_or_child(container)) {
-		return;
+		// Unless it's a transient container
+		if (!container_is_transient_for(container, new_workspace->fullscreen)) {
+			return;
+		}
 	}
 
 	struct sway_output *last_output = last_workspace ?
@@ -639,10 +670,8 @@ void seat_set_focus_warp(struct sway_seat *seat, struct sway_node *node,
 	}
 
 	// find new output's old workspace, which might have to be removed if empty
-	struct sway_workspace *new_output_last_ws = NULL;
-	if (new_output && last_output != new_output) {
-		new_output_last_ws = output_get_active_workspace(new_output);
-	}
+	struct sway_workspace *new_output_last_ws =
+		new_output ? output_get_active_workspace(new_output) : NULL;
 
 	// Unfocus the previous focus
 	if (last_focus) {
@@ -691,8 +720,17 @@ void seat_set_focus_warp(struct sway_seat *seat, struct sway_node *node,
 		ipc_event_window(container, "focus");
 	}
 
-	if (new_output_last_ws) {
-		workspace_consider_destroy(new_output_last_ws);
+	// Move sticky containers to new workspace
+	if (new_output_last_ws && new_workspace != new_output_last_ws) {
+		for (int i = 0; i < new_output_last_ws->floating->length; ++i) {
+			struct sway_container *floater =
+				new_output_last_ws->floating->items[i];
+			if (floater->is_sticky) {
+				container_detach(floater);
+				workspace_add_floating(new_workspace, floater);
+				--i;
+			}
+		}
 	}
 
 	// Close any popups on the old focus
@@ -722,24 +760,21 @@ void seat_set_focus_warp(struct sway_seat *seat, struct sway_node *node,
 	}
 
 	// If we've focused a floating container, bring it to the front.
-	// We do this by putting it at the end of the floating list.
-	if (container) {
-		struct sway_container *floater = container;
-		while (floater->parent) {
-			floater = floater->parent;
-		}
-		if (container_is_floating(floater)) {
-			list_move_to_end(floater->workspace->floating, floater);
-			node_set_dirty(&floater->workspace->node);
-		}
+	if (container && config->raise_floating) {
+		container_raise_floating(container);
+	}
+
+	if (new_output_last_ws) {
+		workspace_consider_destroy(new_output_last_ws);
+	}
+	if (last_workspace && last_workspace != new_output_last_ws) {
+		workspace_consider_destroy(last_workspace);
 	}
 
 	if (last_focus) {
-		if (last_workspace) {
-			workspace_consider_destroy(last_workspace);
-		}
-
-		if (config->mouse_warping && warp && new_output != last_output) {
+		if (config->mouse_warping && warp &&
+				(new_output != last_output ||
+				config->mouse_warping == WARP_CONTAINER)) {
 			double x = 0;
 			double y = 0;
 			if (container) {
@@ -749,9 +784,11 @@ void seat_set_focus_warp(struct sway_seat *seat, struct sway_node *node,
 				x = new_workspace->x + new_workspace->width / 2.0;
 				y = new_workspace->y + new_workspace->height / 2.0;
 			}
+
 			if (!wlr_output_layout_contains_point(root->output_layout,
 					new_output->wlr_output, seat->cursor->cursor->x,
-					seat->cursor->cursor->y)) {
+					seat->cursor->cursor->y)
+					|| config->mouse_warping == WARP_CONTAINER) {
 				wlr_cursor_warp(seat->cursor->cursor, NULL, x, y);
 				cursor_send_pointer_motion(seat->cursor, 0, true);
 			}
@@ -759,6 +796,12 @@ void seat_set_focus_warp(struct sway_seat *seat, struct sway_node *node,
 	}
 
 	seat->has_focus = true;
+
+	if (config->smart_gaps) {
+		// When smart gaps is on, gaps may change when the focus changes so
+		// the workspace needs to be arranged
+		arrange_workspace(new_workspace);
+	}
 
 	update_debug_tree();
 }
@@ -779,9 +822,6 @@ void seat_set_focus_workspace(struct sway_seat *seat,
 
 void seat_set_focus_surface(struct sway_seat *seat,
 		struct wlr_surface *surface, bool unfocus) {
-	if (seat->focused_layer != NULL) {
-		return;
-	}
 	if (seat->has_focus && unfocus) {
 		struct sway_node *focus = seat_get_focus(seat);
 		seat_send_unfocus(focus, seat);
@@ -935,6 +975,9 @@ struct sway_node *seat_get_focus(struct sway_seat *seat) {
 	if (!seat->has_focus) {
 		return NULL;
 	}
+	if (wl_list_length(&seat->focus_stack) == 0) {
+		return NULL;
+	}
 	struct sway_seat_node *current =
 		wl_container_of(seat->focus_stack.next, current, link);
 	return current->node;
@@ -997,6 +1040,11 @@ void seat_begin_down(struct sway_seat *seat, struct sway_container *con,
 	seat->op_ref_con_lx = sx;
 	seat->op_ref_con_ly = sy;
 	seat->op_moved = false;
+
+	// In case the container was not raised by gaining focus, raise on click
+	if (!config->raise_floating) {
+		container_raise_floating(con);
+	}
 }
 
 void seat_begin_move_floating(struct sway_seat *seat,
@@ -1008,6 +1056,12 @@ void seat_begin_move_floating(struct sway_seat *seat,
 	seat->operation = OP_MOVE_FLOATING;
 	seat->op_container = con;
 	seat->op_button = button;
+
+	// In case the container was not raised by gaining focus, raise on click
+	if (!config->raise_floating) {
+		container_raise_floating(con);
+	}
+
 	cursor_set_image(seat->cursor, "grab", NULL);
 }
 
@@ -1041,6 +1095,11 @@ void seat_begin_resize_floating(struct sway_seat *seat,
 	seat->op_ref_con_ly = con->y;
 	seat->op_ref_width = con->width;
 	seat->op_ref_height = con->height;
+	//
+	// In case the container was not raised by gaining focus, raise on click
+	if (!config->raise_floating) {
+		container_raise_floating(con);
+	}
 
 	const char *image = edge == WLR_EDGE_NONE ?
 		"se-resize" : wlr_xcursor_get_resize_name(edge);

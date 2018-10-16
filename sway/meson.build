@@ -10,6 +10,7 @@ sway_sources = files(
 	'security.c',
 	'server.c',
 	'swaynag.c',
+	'xdg_decoration.c',
 
 	'desktop/desktop.c',
 	'desktop/idle_inhibit_v1.c',
@@ -47,6 +48,7 @@ sway_sources = files(
 	'commands/floating_modifier.c',
 	'commands/focus.c',
 	'commands/focus_follows_mouse.c',
+	'commands/raise_floating.c',
 	'commands/focus_on_window_activation.c',
 	'commands/focus_wrapping.c',
 	'commands/font.c',
@@ -68,6 +70,7 @@ sway_sources = files(
 	'commands/no_focus.c',
 	'commands/nop.c',
 	'commands/output.c',
+	'commands/popup_during_fullscreen.c',
 	'commands/reload.c',
 	'commands/rename.c',
 	'commands/resize.c',
@@ -78,6 +81,7 @@ sway_sources = files(
 	'commands/seat/fallback.c',
 	'commands/set.c',
 	'commands/show_marks.c',
+	'commands/smart_borders.c',
 	'commands/smart_gaps.c',
 	'commands/split.c',
 	'commands/sticky.c',
@@ -119,6 +123,7 @@ sway_sources = files(
 
 	'commands/input/accel_profile.c',
 	'commands/input/click_method.c',
+	'commands/input/drag.c',
 	'commands/input/drag_lock.c',
 	'commands/input/dwt.c',
 	'commands/input/events.c',
@@ -164,7 +169,6 @@ sway_deps = [
 	cairo,
 	gdk_pixbuf,
 	jsonc,
-	libcap,
 	libinput,
 	math,
 	pango,
@@ -187,5 +191,6 @@ executable(
 	include_directories: [sway_inc],
 	dependencies: sway_deps,
 	link_with: [lib_sway_common],
+	install_rpath : rpathdir,
 	install: true
 )

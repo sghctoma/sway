@@ -28,6 +28,7 @@ enum sway_container_border {
 	B_NONE,
 	B_PIXEL,
 	B_NORMAL,
+	B_CSD,
 };
 
 struct sway_root;
@@ -63,7 +64,6 @@ struct sway_container_state {
 	bool border_bottom;
 	bool border_left;
 	bool border_right;
-	bool using_csd;
 };
 
 struct sway_container {
@@ -94,9 +94,6 @@ struct sway_container {
 
 	// The gaps currently applied to the container.
 	double current_gaps;
-	bool has_gaps;
-	double gaps_inner;
-	double gaps_outer;
 
 	struct sway_workspace *workspace; // NULL when hidden in the scratchpad
 	struct sway_container *parent;    // NULL if container in root of workspace
@@ -294,5 +291,8 @@ bool sway_dir_to_wlr(enum movement_direction dir, enum wlr_direction *out);
 
 struct sway_container *container_split(struct sway_container *child,
 		enum sway_container_layout layout);
+
+bool container_is_transient_for(struct sway_container *child,
+		struct sway_container *ancestor);
 
 #endif

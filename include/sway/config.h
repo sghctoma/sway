@@ -35,7 +35,6 @@ enum binding_flags {
 	BINDING_BORDER=4,    // mouse only; trigger on container border
 	BINDING_CONTENTS=8,  // mouse only; trigger on container contents
 	BINDING_TITLEBAR=16, // mouse only; trigger on container titlebar
-	BINDING_RELOAD=32,   // the binding runs the reload command
 };
 
 /**
@@ -93,6 +92,7 @@ struct input_config {
 
 	int accel_profile;
 	int click_method;
+	int drag;
 	int drag_lock;
 	int dwt;
 	int left_handed;
@@ -173,6 +173,8 @@ struct output_config {
 struct workspace_config {
 	char *workspace;
 	char *output;
+	int gaps_inner;
+	int gaps_outer;
 };
 
 struct bar_config {
@@ -189,6 +191,7 @@ struct bar_config {
 	 * In "show" mode, it will always be shown on top of the active workspace.
 	 */
 	char *hidden_state;
+	bool visible_by_modifier; // only relevant in "hide" mode
 	/**
 	 * Id name used to identify the bar through IPC.
 	 *
@@ -237,6 +240,12 @@ struct bar_config {
 	} colors;
 };
 
+struct bar_binding {
+	uint32_t button;
+	bool release;
+	char *command;
+};
+
 struct border_colors {
 	float border[4];
 	float background[4];
@@ -250,7 +259,14 @@ enum edge_border_types {
 	E_VERTICAL,     /**< hide vertical edge borders */
 	E_HORIZONTAL,   /**< hide horizontal edge borders */
 	E_BOTH,		/**< hide vertical and horizontal edge borders */
-	E_SMART		/**< hide both if precisely one window is present in workspace */
+	E_SMART, /**< hide both if precisely one window is present in workspace */
+	E_SMART_NO_GAPS, /**< hide both if one window and gaps to edge is zero */
+};
+
+enum sway_popup_during_fullscreen {
+	POPUP_SMART,
+	POPUP_IGNORE,
+	POPUP_LEAVE,
 };
 
 enum command_context {
@@ -316,6 +332,12 @@ enum focus_wrapping_mode {
 	WRAP_FORCE
 };
 
+enum mouse_warping_mode {
+	WARP_NO,
+	WARP_OUTPUT,
+	WARP_CONTAINER
+};
+
 /**
  * The configuration struct. The result of loading a config file.
  */
@@ -352,10 +374,12 @@ struct sway_config {
 	bool pango_markup;
 	size_t urgent_timeout;
 	enum sway_fowa focus_on_window_activation;
+	enum sway_popup_during_fullscreen popup_during_fullscreen;
 
 	// Flags
 	bool focus_follows_mouse;
-	bool mouse_warping;
+	bool raise_floating;
+	enum mouse_warping_mode mouse_warping;
 	enum focus_wrapping_mode focus_wrapping;
 	bool active;
 	bool failed;
@@ -366,7 +390,6 @@ struct sway_config {
 	bool show_marks;
 	bool tiling_drag;
 
-	bool edge_gaps;
 	bool smart_gaps;
 	int gaps_inner;
 	int gaps_outer;
@@ -380,6 +403,7 @@ struct sway_config {
 	int border_thickness;
 	int floating_border_thickness;
 	enum edge_border_types hide_edge_borders;
+	enum edge_border_types saved_edge_borders;
 
 	// border colors
 	struct {
@@ -449,8 +473,6 @@ void free_sway_variable(struct sway_variable *var);
  */
 char *do_var_replacement(char *str);
 
-struct cmd_results *check_security_config();
-
 int input_identifier_cmp(const void *item, const void *data);
 
 struct input_config *new_input_config(const char* identifier);
@@ -471,7 +493,7 @@ struct seat_config *copy_seat_config(struct seat_config *seat);
 
 void free_seat_config(struct seat_config *ic);
 
-struct seat_attachment_config *seat_attachment_config_new();
+struct seat_attachment_config *seat_attachment_config_new(void);
 
 struct seat_attachment_config *seat_config_get_attachment(
 		struct seat_config *seat_config, char *identifier);
@@ -509,6 +531,8 @@ void free_sway_binding(struct sway_binding *sb);
 
 void seat_execute_command(struct sway_seat *seat, struct sway_binding *binding);
 
+void load_swaybar(struct bar_config *bar);
+
 void load_swaybars(void);
 
 void terminate_swaybg(pid_t pid);
@@ -516,6 +540,8 @@ void terminate_swaybg(pid_t pid);
 struct bar_config *default_bar_config(void);
 
 void free_bar_config(struct bar_config *bar);
+
+void free_bar_binding(struct bar_binding *binding);
 
 void free_workspace_config(struct workspace_config *wsc);
 

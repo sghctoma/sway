@@ -19,6 +19,17 @@
 
 static const struct sway_view_child_impl popup_impl;
 
+static void popup_get_root_coords(struct sway_view_child *child,
+		int *root_sx, int *root_sy) {
+	struct sway_xdg_popup_v6 *popup = (struct sway_xdg_popup_v6 *)child;
+	struct wlr_xdg_surface_v6 *surface = popup->wlr_xdg_surface_v6;
+
+	wlr_xdg_popup_v6_get_toplevel_coords(surface->popup,
+		-surface->geometry.x + surface->popup->geometry.x,
+		-surface->geometry.y + surface->popup->geometry.y,
+		root_sx, root_sy);
+}
+
 static void popup_destroy(struct sway_view_child *child) {
 	if (!sway_assert(child->impl == &popup_impl,
 			"Expected an xdg_shell_v6 popup")) {
@@ -31,6 +42,7 @@ static void popup_destroy(struct sway_view_child *child) {
 }
 
 static const struct sway_view_child_impl popup_impl = {
+	.get_root_coords = popup_get_root_coords,
 	.destroy = popup_destroy,
 };
 
@@ -83,6 +95,9 @@ static struct sway_xdg_popup_v6 *popup_create(
 	popup->new_popup.notify = popup_handle_new_popup;
 	wl_signal_add(&xdg_surface->events.destroy, &popup->destroy);
 	popup->destroy.notify = popup_handle_destroy;
+
+	wl_signal_add(&xdg_surface->events.map, &popup->child.surface_map);
+	wl_signal_add(&xdg_surface->events.unmap, &popup->child.surface_unmap);
 
 	popup_unconstrain(popup);
 
@@ -171,15 +186,6 @@ static bool wants_floating(struct sway_view *view) {
 		|| toplevel->parent;
 }
 
-static bool has_client_side_decorations(struct sway_view *view) {
-	struct sway_xdg_shell_v6_view *xdg_shell_v6_view =
-		xdg_shell_v6_view_from_view(view);
-	if (xdg_shell_v6_view == NULL) {
-		return true;
-	}
-	return xdg_shell_v6_view->deco_mode != WLR_SERVER_DECORATION_MANAGER_MODE_SERVER;
-}
-
 static void for_each_surface(struct sway_view *view,
 		wlr_surface_iterator_func_t iterator, void *user_data) {
 	if (xdg_shell_v6_view_from_view(view) == NULL) {
@@ -196,6 +202,21 @@ static void for_each_popup(struct sway_view *view,
 	}
 	wlr_xdg_surface_v6_for_each_popup(view->wlr_xdg_surface_v6, iterator,
 		user_data);
+}
+
+static bool is_transient_for(struct sway_view *child,
+		struct sway_view *ancestor) {
+	if (xdg_shell_v6_view_from_view(child) == NULL) {
+		return false;
+	}
+	struct wlr_xdg_surface_v6 *surface = child->wlr_xdg_surface_v6;
+	while (surface) {
+		if (surface->toplevel->parent == ancestor->wlr_xdg_surface_v6) {
+			return true;
+		}
+		surface = surface->toplevel->parent;
+	}
+	return false;
 }
 
 static void _close(struct sway_view *view) {
@@ -237,9 +258,9 @@ static const struct sway_view_impl view_impl = {
 	.set_tiled = set_tiled,
 	.set_fullscreen = set_fullscreen,
 	.wants_floating = wants_floating,
-	.has_client_side_decorations = has_client_side_decorations,
 	.for_each_surface = for_each_surface,
 	.for_each_popup = for_each_popup,
+	.is_transient_for = is_transient_for,
 	.close = _close,
 	.close_popups = close_popups,
 	.destroy = destroy,
@@ -382,15 +403,13 @@ static void handle_map(struct wl_listener *listener, void *data) {
 		view->natural_height = view->wlr_xdg_surface_v6->surface->current.height;
 	}
 
+	view_map(view, view->wlr_xdg_surface_v6->surface);
+
 	struct sway_server_decoration *deco =
 		decoration_from_surface(xdg_surface->surface);
-	if (deco != NULL) {
-		xdg_shell_v6_view->deco_mode = deco->wlr_server_decoration->mode;
-	} else {
-		xdg_shell_v6_view->deco_mode = WLR_SERVER_DECORATION_MANAGER_MODE_CLIENT;
-	}
-
-	view_map(view, view->wlr_xdg_surface_v6->surface);
+	bool csd = !deco || deco->wlr_server_decoration->mode ==
+			WLR_SERVER_DECORATION_MANAGER_MODE_CLIENT;
+	view_update_csd_from_client(view, csd);
 
 	if (xdg_surface->toplevel->client_pending.fullscreen) {
 		container_set_fullscreen(view->container, true);

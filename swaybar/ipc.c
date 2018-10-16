@@ -7,6 +7,7 @@
 #include "swaybar/config.h"
 #include "swaybar/ipc.h"
 #include "ipc-client.h"
+#include "list.h"
 
 void ipc_send_workspace_command(struct swaybar *bar, const char *ws) {
 	const char *fmt = "workspace \"%s\"";
@@ -151,11 +152,12 @@ static bool ipc_parse_config(
 		json_object_put(bar_config);
 		return false;
 	}
-	json_object *markup, *mode, *hidden_bar, *position, *status_command;
+	json_object *markup, *mode, *hidden_state, *position, *status_command;
 	json_object *font, *bar_height, *wrap_scroll, *workspace_buttons, *strip_workspace_numbers;
 	json_object *binding_mode_indicator, *verbose, *colors, *sep_symbol, *outputs;
+	json_object *bindings;
 	json_object_object_get_ex(bar_config, "mode", &mode);
-	json_object_object_get_ex(bar_config, "hidden_bar", &hidden_bar);
+	json_object_object_get_ex(bar_config, "hidden_state", &hidden_state);
 	json_object_object_get_ex(bar_config, "position", &position);
 	json_object_object_get_ex(bar_config, "status_command", &status_command);
 	json_object_object_get_ex(bar_config, "font", &font);
@@ -169,6 +171,7 @@ static bool ipc_parse_config(
 	json_object_object_get_ex(bar_config, "colors", &colors);
 	json_object_object_get_ex(bar_config, "outputs", &outputs);
 	json_object_object_get_ex(bar_config, "pango_markup", &markup);
+	json_object_object_get_ex(bar_config, "bindings", &bindings);
 	if (status_command) {
 		free(config->status_command);
 		config->status_command = strdup(json_object_get_string(status_command));
@@ -201,6 +204,29 @@ static bool ipc_parse_config(
 	}
 	if (markup) {
 		config->pango_markup = json_object_get_boolean(markup);
+	}
+	if (bindings) {
+		int length = json_object_array_length(bindings);
+		for (int i = 0; i < length; ++i) {
+			json_object *bindobj = json_object_array_get_idx(bindings, i);
+			struct swaybar_binding *binding =
+				calloc(1, sizeof(struct swaybar_binding));
+			binding->button = json_object_get_int(
+					json_object_object_get(bindobj, "input_code"));
+			binding->command = strdup(json_object_get_string(
+					json_object_object_get(bindobj, "command")));
+			binding->release = json_object_get_boolean(
+					json_object_object_get(bindobj, "release"));
+			list_add(config->bindings, binding);
+		}
+	}
+	if (hidden_state) {
+		free(config->hidden_state);
+		config->hidden_state = strdup(json_object_get_string(hidden_state));
+	}
+	if (mode) {
+		free(config->mode);
+		config->mode = strdup(json_object_get_string(mode));
 	}
 
 	struct config_output *output, *tmp;
@@ -236,7 +262,7 @@ static bool ipc_parse_config(
 	return true;
 }
 
-void ipc_get_workspaces(struct swaybar *bar) {
+bool ipc_get_workspaces(struct swaybar *bar) {
 	struct swaybar_output *output;
 	wl_list_for_each(output, &bar->outputs, link) {
 		free_workspaces(&output->workspaces);
@@ -248,8 +274,10 @@ void ipc_get_workspaces(struct swaybar *bar) {
 	json_object *results = json_tokener_parse(res);
 	if (!results) {
 		free(res);
-		return;
+		return false;
 	}
+
+	bar->visible_by_urgency = false;
 	size_t length = json_object_array_length(results);
 	json_object *ws_json;
 	json_object *num, *name, *visible, *focused, *out, *urgent;
@@ -276,12 +304,16 @@ void ipc_get_workspaces(struct swaybar *bar) {
 					output->focused = true;
 				}
 				ws->urgent = json_object_get_boolean(urgent);
+				if (ws->urgent) {
+					bar->visible_by_urgency = true;
+				}
 				wl_list_insert(&output->workspaces, &ws->link);
 			}
 		}
 	}
 	json_object_put(results);
 	free(res);
+	return determine_bar_visibility(bar, false);
 }
 
 static void ipc_get_outputs(struct swaybar *bar) {
@@ -319,10 +351,18 @@ static void ipc_get_outputs(struct swaybar *bar) {
 	free(res);
 }
 
-bool ipc_initialize(struct swaybar *bar, const char *bar_id) {
-	uint32_t len = strlen(bar_id);
+void ipc_execute_binding(struct swaybar *bar, struct swaybar_binding *bind) {
+	wlr_log(WLR_DEBUG, "Executing binding for button %u (release=%d): `%s`",
+			bind->button, bind->release, bind->command);
+	uint32_t len = strlen(bind->command);
+	free(ipc_single_command(bar->ipc_socketfd,
+			IPC_COMMAND, bind->command, &len));
+}
+
+bool ipc_initialize(struct swaybar *bar) {
+	uint32_t len = strlen(bar->id);
 	char *res = ipc_single_command(bar->ipc_socketfd,
-			IPC_GET_BAR_CONFIG, bar_id, &len);
+			IPC_GET_BAR_CONFIG, bar->id, &len);
 	if (!ipc_parse_config(bar->config, res)) {
 		free(res);
 		return false;
@@ -330,11 +370,60 @@ bool ipc_initialize(struct swaybar *bar, const char *bar_id) {
 	free(res);
 	ipc_get_outputs(bar);
 
-	const char *subscribe = "[ \"workspace\", \"mode\" ]";
-	len = strlen(subscribe);
+	struct swaybar_config *config = bar->config;
+	char subscribe[128]; // suitably large buffer
+	len = snprintf(subscribe, 128,
+			"[ \"barconfig_update\" , \"bar_state_update\" %s %s ]",
+			config->binding_mode_indicator ? ", \"mode\"" : "",
+			config->workspace_buttons ? ", \"workspace\"" : "");
 	free(ipc_single_command(bar->ipc_event_socketfd,
 			IPC_SUBSCRIBE, subscribe, &len));
 	return true;
+}
+
+static bool handle_bar_state_update(struct swaybar *bar, json_object *event) {
+	json_object *json_id;
+	json_object_object_get_ex(event, "id", &json_id);
+	const char *id = json_object_get_string(json_id);
+	if (strcmp(id, bar->id) != 0) {
+		return false;
+	}
+
+	json_object *visible_by_modifier;
+	json_object_object_get_ex(event, "visible_by_modifier", &visible_by_modifier);
+	bar->visible_by_modifier = json_object_get_boolean(visible_by_modifier);
+	return determine_bar_visibility(bar, false);
+}
+
+static bool handle_barconfig_update(struct swaybar *bar,
+		json_object *json_config) {
+	json_object *json_id;
+	json_object_object_get_ex(json_config, "id", &json_id);
+	const char *id = json_object_get_string(json_id);
+	if (strcmp(id, bar->id) != 0) {
+		return false;
+	}
+
+	struct swaybar_config *config = bar->config;
+
+	json_object *json_state;
+	json_object_object_get_ex(json_config, "hidden_state", &json_state);
+	const char *new_state = json_object_get_string(json_state);
+	char *old_state = config->hidden_state;
+	if (strcmp(new_state, old_state) != 0) {
+		wlr_log(WLR_DEBUG, "Changing bar hidden state to %s", new_state);
+		free(old_state);
+		config->hidden_state = strdup(new_state);
+		return determine_bar_visibility(bar, false);
+	}
+
+	free(config->mode);
+	json_object *json_mode;
+	json_object_object_get_ex(json_config, "mode", &json_mode);
+	config->mode = strdup(json_object_get_string(json_mode));
+	wlr_log(WLR_DEBUG, "Changing bar mode to %s", config->mode);
+
+	return determine_bar_visibility(bar, true);
 }
 
 bool handle_ipc_readable(struct swaybar *bar) {
@@ -342,44 +431,47 @@ bool handle_ipc_readable(struct swaybar *bar) {
 	if (!resp) {
 		return false;
 	}
-	switch (resp->type) {
-	case IPC_EVENT_WORKSPACE:
-		ipc_get_workspaces(bar);
-		break;
-	case IPC_EVENT_MODE: {
-		json_object *result = json_tokener_parse(resp->payload);
-		if (!result) {
-			free_ipc_response(resp);
-			wlr_log(WLR_ERROR, "failed to parse payload as json");
-			return false;
-		}
-		json_object *json_change, *json_pango_markup;
-		if (json_object_object_get_ex(result, "change", &json_change)) {
-			const char *change = json_object_get_string(json_change);
-			free(bar->config->mode);
-			if (strcmp(change, "default") == 0) {
-				bar->config->mode = NULL;
-			} else {
-				bar->config->mode = strdup(change);
-			}
-		} else {
-			wlr_log(WLR_ERROR, "failed to parse response");
-			json_object_put(result);
-			free_ipc_response(resp);
-			return false;
-		}
-		if (json_object_object_get_ex(result,
-					"pango_markup", &json_pango_markup)) {
-			bar->config->mode_pango_markup = json_object_get_boolean(
-					json_pango_markup);
-		}
-		json_object_put(result);
-		break;
-	}
-	default:
+
+	json_object *result = json_tokener_parse(resp->payload);
+	if (!result) {
+		wlr_log(WLR_ERROR, "failed to parse payload as json");
 		free_ipc_response(resp);
 		return false;
 	}
+
+	bool bar_is_dirty = true;
+	switch (resp->type) {
+	case IPC_EVENT_WORKSPACE:
+		bar_is_dirty = ipc_get_workspaces(bar);
+		break;
+	case IPC_EVENT_MODE: {
+		json_object *json_change, *json_pango_markup;
+		if (json_object_object_get_ex(result, "change", &json_change)) {
+			const char *change = json_object_get_string(json_change);
+			free(bar->mode);
+			bar->mode = strcmp(change, "default") != 0 ? strdup(change) : NULL;
+		} else {
+			wlr_log(WLR_ERROR, "failed to parse response");
+			bar_is_dirty = false;
+			break;
+		}
+		if (json_object_object_get_ex(result,
+					"pango_markup", &json_pango_markup)) {
+			bar->mode_pango_markup = json_object_get_boolean(json_pango_markup);
+		}
+		break;
+	}
+	case IPC_EVENT_BARCONFIG_UPDATE:
+		bar_is_dirty = handle_barconfig_update(bar, result);
+		break;
+	case IPC_EVENT_BAR_STATE_UPDATE:
+		bar_is_dirty = handle_bar_state_update(bar, result);
+		break;
+	default:
+		bar_is_dirty = false;
+		break;
+	}
+	json_object_put(result);
 	free_ipc_response(resp);
-	return true;
+	return bar_is_dirty;
 }

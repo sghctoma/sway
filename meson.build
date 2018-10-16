@@ -42,9 +42,9 @@ pango          = dependency('pango')
 pangocairo     = dependency('pangocairo')
 gdk_pixbuf     = dependency('gdk-pixbuf-2.0', required: false)
 pixman         = dependency('pixman-1')
-libcap         = dependency('libcap', required: false)
 libinput       = dependency('libinput', version: '>=1.6.0')
 libpam         = cc.find_library('pam', required: false)
+crypt          = cc.find_library('crypt', required: false)
 systemd        = dependency('libsystemd', required: false)
 elogind        = dependency('libelogind', required: false)
 math           = cc.find_library('m')
@@ -89,6 +89,7 @@ if scdoc.found()
 		'sway/sway.5.scd',
 		'sway/sway-bar.5.scd',
 		'sway/sway-input.5.scd',
+		'sway/sway-output.5.scd',
 		'swaylock/swaylock.1.scd',
 		'swaymsg/swaymsg.1.scd',
 		'swayidle/swayidle.1.scd',
@@ -129,7 +130,16 @@ else
 endif
 add_project_arguments('-DSWAY_VERSION=@0@'.format(version), language: 'c')
 
-add_project_arguments('-D_LD_LIBRARY_PATH="@0@"'.format(get_option('ld-library-path')), language: 'c')
+if get_option('use_rpath')
+	if get_option('custom_rpath') == ''
+		# default to platform specific libdir, one level up from the binary
+		rpathdir = join_paths('$ORIGIN', '..', '$LIB')
+	else
+		rpathdir = get_option('custom_rpath')
+	endif
+else
+	rpathdir = ''
+endif
 
 sway_inc = include_directories('include')
 

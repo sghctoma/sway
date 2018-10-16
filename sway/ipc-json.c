@@ -42,7 +42,7 @@ static const char *ipc_json_orientation_description(enum sway_container_layout l
 	return "none";
 }
 
-json_object *ipc_json_get_version() {
+json_object *ipc_json_get_version(void) {
 	int major = 0, minor = 0, patch = 0;
 	json_object *version = json_object_new_object();
 
@@ -216,6 +216,8 @@ static const char *describe_container_border(enum sway_container_border border) 
 		return "pixel";
 	case B_NORMAL:
 		return "normal";
+	case B_CSD:
+		return "csd";
 	}
 	return "unknown";
 }
@@ -271,7 +273,8 @@ static void ipc_json_describe_view(struct sway_container *c, json_object *object
 static void ipc_json_describe_container(struct sway_container *c, json_object *object) {
 	json_object_object_add(object, "name",
 			c->title ? json_object_new_string(c->title) : NULL);
-	json_object_object_add(object, "type", json_object_new_string("con"));
+	json_object_object_add(object, "type",
+			json_object_new_string(container_is_floating(c) ? "floating_con" : "con"));
 
 	json_object_object_add(object, "layout",
 		json_object_new_string(ipc_json_layout_description(c->layout)));
@@ -511,8 +514,8 @@ json_object *ipc_json_describe_bar_config(struct bar_config *bar) {
 			json_object_new_string(bar->hidden_state));
 	json_object_object_add(json, "position",
 			json_object_new_string(bar->position));
-	json_object_object_add(json, "status_command",
-			json_object_new_string(bar->status_command));
+	json_object_object_add(json, "status_command", bar->status_command ?
+			json_object_new_string(bar->status_command) : NULL);
 	json_object_object_add(json, "font",
 			json_object_new_string((bar->font) ? bar->font : config->font));
 	if (bar->separator_symbol) {
@@ -619,6 +622,22 @@ json_object *ipc_json_describe_bar_config(struct bar_config *bar) {
 	}
 
 	json_object_object_add(json, "colors", colors);
+
+	if (bar->bindings->length > 0) {
+		json_object *bindings = json_object_new_array();
+		for (int i = 0; i < bar->bindings->length; ++i) {
+			struct bar_binding *binding = bar->bindings->items[i];
+			json_object *bind = json_object_new_object();
+			json_object_object_add(bind, "input_code",
+					json_object_new_int(binding->button));
+			json_object_object_add(bind, "command",
+					json_object_new_string(binding->command));
+			json_object_object_add(bind, "release",
+					json_object_new_boolean(binding->release));
+			json_object_array_add(bindings, bind);
+		}
+		json_object_object_add(json, "bindings", bindings);
+	}
 
 	// Add outputs if defined
 	if (bar->outputs && bar->outputs->length > 0) {

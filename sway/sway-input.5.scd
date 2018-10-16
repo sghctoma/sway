@@ -13,6 +13,12 @@ To obtain a list of available device identifiers, run *swaymsg -t get\_inputs*.
 
 ## KEYBOARD CONFIGURATION
 
+*input* <identifier> repeat\_delay <n>
+	Sets the delay before repeating a held-down key, in milliseconds.
+
+*input* <identifier> repeat\_rate <n>
+	Sets the key repeat rate in number of keypresses per second.
+
 For more information on these xkb configuration options, see
 *xkeyboard-config*(7).
 
@@ -35,10 +41,10 @@ For more information on these xkb configuration options, see
 The following commands may only be used in the configuration file.
 
 *input* <identifier> xkb\_capslock enabled|disabled
-	Initially enables or disables CapsLock, the default is disabled.
+	Initially enables or disables CapsLock on startup, the default is disabled.
 
 *input* <identifier> xkb\_numlock enabled|disabled
-	Initially enables or disables NumLock, the default is disabled.
+	Initially enables or disables NumLock on startup, the default is disabled.
 
 ## MAPPING CONFIGURATION
 
@@ -66,6 +72,9 @@ The following commands may only be used in the configuration file.
 
 *input* <identifier> click\_method none|button\_areas|clickfinger
 	Changes the click method for the specified device.
+
+*input* <identifier> drag enabled|disabled
+	Enables or disables tap-and-drag for specified input device.
 
 *input* <identifier> drag\_lock enabled|disabled
 	Enables or disables drag lock for specified input device.
@@ -134,4 +143,4 @@ in their own "seat").
 
 # SEE ALSO
 
-*sway*(5)
+*sway*(5) *sway-output*(5)

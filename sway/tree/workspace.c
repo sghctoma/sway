@@ -68,6 +68,20 @@ struct sway_workspace *workspace_create(struct sway_output *output,
 	ws->output_priority = create_list();
 	workspace_output_add_priority(ws, output);
 
+	ws->gaps_outer = config->gaps_outer;
+	ws->gaps_inner = config->gaps_inner;
+	if (name) {
+		struct workspace_config *wsc = workspace_find_config(name);
+		if (wsc) {
+			if (wsc->gaps_outer != INT_MIN) {
+				ws->gaps_outer = wsc->gaps_outer;
+			}
+			if (wsc->gaps_inner != INT_MIN) {
+				ws->gaps_inner = wsc->gaps_inner;
+			}
+		}
+	}
+
 	output_add_workspace(output, ws);
 	output_sort_workspaces(output);
 
@@ -355,7 +369,6 @@ struct sway_workspace *workspace_prev(struct sway_workspace *current) {
 bool workspace_switch(struct sway_workspace *workspace,
 		bool no_auto_back_and_forth) {
 	struct sway_seat *seat = input_manager_current_seat(input_manager);
-	struct sway_node *focus = seat_get_focus_inactive(seat, &root->node);
 	struct sway_workspace *active_ws = seat_get_focused_workspace(seat);
 
 	if (!no_auto_back_and_forth && config->auto_back_and_forth
@@ -376,27 +389,6 @@ bool workspace_switch(struct sway_workspace *workspace,
 			return false;
 		}
 		strcpy(prev_workspace_name, active_ws->name);
-	}
-
-	// Move sticky containers to new workspace
-	struct sway_output *next_output = workspace->output;
-	struct sway_workspace *next_output_prev_ws =
-		output_get_active_workspace(next_output);
-	if (workspace != next_output_prev_ws) {
-		for (int i = 0; i < next_output_prev_ws->floating->length; ++i) {
-			struct sway_container *floater =
-				next_output_prev_ws->floating->items[i];
-			if (floater->is_sticky) {
-				container_detach(floater);
-				workspace_add_floating(workspace, floater);
-				if (&floater->node == focus) {
-					seat_set_focus(seat, NULL);
-					seat_set_focus_container(seat, floater);
-					cursor_send_pointer_motion(seat->cursor, 0, true);
-				}
-				--i;
-			}
-		}
 	}
 
 	wlr_log(WLR_DEBUG, "Switching to workspace %p:%s",
@@ -626,19 +618,25 @@ void workspace_add_gaps(struct sway_workspace *ws) {
 	if (ws->current_gaps > 0) {
 		return;
 	}
-	bool should_apply =
-		config->edge_gaps || (config->smart_gaps && ws->tiling->length > 1);
-	if (!should_apply) {
-		return;
+	if (config->smart_gaps) {
+		struct sway_seat *seat = input_manager_get_default_seat(input_manager);
+		struct sway_container *focus =
+			seat_get_focus_inactive_tiling(seat, ws);
+		if (focus && !focus->view) {
+			focus = seat_get_focus_inactive_view(seat, &focus->node);
+		}
+		if (focus && focus->view && view_is_only_visible(focus->view)) {
+			return;
+		}
 	}
 
-	ws->current_gaps = ws->has_gaps ? ws->gaps_outer : config->gaps_outer;
+	ws->current_gaps = ws->gaps_outer;
 
 	if (ws->layout == L_TABBED || ws->layout == L_STACKED) {
 		// We have to add inner gaps for this, because children of tabbed and
 		// stacked containers don't apply their own gaps - they assume the
 		// tabbed/stacked container is using gaps.
-		ws->current_gaps += ws->has_gaps ? ws->gaps_inner : config->gaps_inner;
+		ws->current_gaps += ws->gaps_inner;
 	}
 
 	ws->x += ws->current_gaps;

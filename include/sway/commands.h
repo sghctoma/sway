@@ -95,7 +95,7 @@ struct cmd_results *add_color(const char *name,
 /**
  * TODO: Move this function and its dependent functions to container.c.
  */
-bool container_resize_tiled(struct sway_container *parent, enum wlr_edges edge,
+void container_resize_tiled(struct sway_container *parent, enum wlr_edges edge,
 		int amount);
 
 sway_cmd cmd_assign;
@@ -103,6 +103,7 @@ sway_cmd cmd_bar;
 sway_cmd cmd_bindcode;
 sway_cmd cmd_bindsym;
 sway_cmd cmd_border;
+sway_cmd cmd_client_noop;
 sway_cmd cmd_client_focused;
 sway_cmd cmd_client_focused_inactive;
 sway_cmd cmd_client_unfocused;
@@ -125,6 +126,7 @@ sway_cmd cmd_floating_modifier;
 sway_cmd cmd_floating_scroll;
 sway_cmd cmd_focus;
 sway_cmd cmd_focus_follows_mouse;
+sway_cmd cmd_raise_floating;
 sway_cmd cmd_focus_on_window_activation;
 sway_cmd cmd_focus_wrapping;
 sway_cmd cmd_font;
@@ -152,6 +154,7 @@ sway_cmd cmd_new_window;
 sway_cmd cmd_no_focus;
 sway_cmd cmd_output;
 sway_cmd cmd_permit;
+sway_cmd cmd_popup_during_fullscreen;
 sway_cmd cmd_reject;
 sway_cmd cmd_reload;
 sway_cmd cmd_rename;
@@ -160,6 +163,7 @@ sway_cmd cmd_scratchpad;
 sway_cmd cmd_seamless_mouse;
 sway_cmd cmd_set;
 sway_cmd cmd_show_marks;
+sway_cmd cmd_smart_borders;
 sway_cmd cmd_smart_gaps;
 sway_cmd cmd_split;
 sway_cmd cmd_splith;
@@ -217,6 +221,7 @@ sway_cmd bar_colors_cmd_urgent_workspace;
 sway_cmd input_cmd_seat;
 sway_cmd input_cmd_accel_profile;
 sway_cmd input_cmd_click_method;
+sway_cmd input_cmd_drag;
 sway_cmd input_cmd_drag_lock;
 sway_cmd input_cmd_dwt;
 sway_cmd input_cmd_events;

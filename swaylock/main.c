@@ -21,6 +21,7 @@
 #include "pool-buffer.h"
 #include "cairo.h"
 #include "log.h"
+#include "loop.h"
 #include "readline.h"
 #include "stringop.h"
 #include "util.h"
@@ -32,7 +33,7 @@ void sway_terminate(int exit_code) {
 	exit(exit_code);
 }
 
-static void daemonize() {
+static void daemonize(void) {
 	int fds[2];
 	if (pipe(fds) != 0) {
 		wlr_log(WLR_ERROR, "Failed to pipe");
@@ -277,7 +278,7 @@ static void handle_global(void *data, struct wl_registry *registry,
 				&wl_shm_interface, 1);
 	} else if (strcmp(interface, wl_seat_interface.name) == 0) {
 		struct wl_seat *seat = wl_registry_bind(
-				registry, name, &wl_seat_interface, 1);
+				registry, name, &wl_seat_interface, 3);
 		wl_seat_add_listener(seat, &seat_listener, state);
 	} else if (strcmp(interface, zwlr_layer_shell_v1_interface.name) == 0) {
 		state->layer_shell = wl_registry_bind(
@@ -633,13 +634,9 @@ static int parse_options(int argc, char **argv, struct swaylock_state *state,
 			}
 			break;
 		case 'v':
-#if defined SWAY_GIT_VERSION && defined SWAY_GIT_BRANCH && defined SWAY_VERSION_DATE
-			fprintf(stdout, "swaylock version %s (%s, branch \"%s\")\n",
-					SWAY_GIT_VERSION, SWAY_VERSION_DATE, SWAY_GIT_BRANCH);
-#else
-			fprintf(stdout, "version unknown\n");
-#endif
-			return 1;
+			fprintf(stdout, "swaylock version " SWAY_VERSION "\n");
+			exit(EXIT_SUCCESS);
+			break;
 		case LO_BS_HL_COLOR:
 			if (state) {
 				state->args.colors.bs_highlight = parse_color(optarg);
@@ -844,6 +841,10 @@ static int load_config(char *path, struct swaylock_state *state,
 
 static struct swaylock_state state;
 
+static void display_in(int fd, short mask, void *data) {
+	wl_display_dispatch(state.display);
+}
+
 int main(int argc, char **argv) {
 	wlr_log_init(WLR_DEBUG, NULL);
 	initialize_pw_backend();
@@ -903,7 +904,11 @@ int main(int argc, char **argv) {
 	wl_list_init(&state.surfaces);
 	state.xkb.context = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
 	state.display = wl_display_connect(NULL);
-	assert(state.display);
+	if (!state.display) {
+		sway_abort("Unable to connect to the compositor. "
+				"If your compositor is running, check or set the "
+				"WAYLAND_DISPLAY environment variable.");
+	}
 
 	struct wl_registry *registry = wl_display_get_registry(state.display);
 	wl_registry_add_listener(registry, &registry_listener, &state);
@@ -946,9 +951,14 @@ int main(int argc, char **argv) {
 		daemonize();
 	}
 
+	state.eventloop = loop_create();
+	loop_add_fd(state.eventloop, wl_display_get_fd(state.display), POLL_IN,
+			display_in, NULL);
+
 	state.run_display = true;
-	while (wl_display_dispatch(state.display) != -1 && state.run_display) {
-		// This space intentionally left blank
+	while (state.run_display) {
+		wl_display_flush(state.display);
+		loop_poll(state.eventloop);
 	}
 
 	free(state.args.font);

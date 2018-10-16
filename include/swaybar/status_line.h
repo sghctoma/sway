@@ -14,6 +14,8 @@ enum status_protocol {
 };
 
 struct status_line {
+	struct swaybar *bar;
+
 	pid_t pid;
 	int read_fd, write_fd;
 	FILE *read, *write;
@@ -22,7 +24,11 @@ struct status_line {
 	const char *text;
 	struct wl_list blocks; // i3bar_block::link
 
+	int stop_signal;
+	int cont_signal;
+
 	bool click_events;
+	bool clicked;
 	char *buffer;
 	size_t buffer_size;
 	size_t buffer_index;

@@ -223,11 +223,15 @@ void output_drag_icons_for_each_surface(struct sway_output *output,
 	}
 }
 
+static int scale_length(int length, int offset, float scale) {
+	return round((offset + length) * scale) - round(offset * scale);
+}
+
 static void scale_box(struct wlr_box *box, float scale) {
-	box->x *= scale;
-	box->y *= scale;
-	box->width *= scale;
-	box->height *= scale;
+	box->width = scale_length(box->width, box->x, scale);
+	box->height = scale_length(box->height, box->y, scale);
+	box->x = round(box->x * scale);
+	box->y = round(box->y * scale);
 }
 
 struct sway_workspace *output_get_active_workspace(struct sway_output *output) {
@@ -329,6 +333,14 @@ static void send_frame_done(struct sway_output *output, struct timespec *when) {
 				workspace->current.fullscreen, &data);
 		container_for_each_child(workspace->current.fullscreen,
 				send_frame_done_container_iterator, &data);
+		for (int i = 0; i < workspace->current.floating->length; ++i) {
+			struct sway_container *floater =
+				workspace->current.floating->items[i];
+			if (container_is_transient_for(floater,
+						workspace->current.fullscreen)) {
+				send_frame_done_container_iterator(floater, &data);
+			}
+		}
 #ifdef HAVE_XWAYLAND
 		send_frame_done_unmanaged(output, &root->xwayland_unmanaged, when);
 #endif

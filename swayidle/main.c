@@ -92,7 +92,7 @@ static int release_lock(void *data) {
 	return 0;
 }
 
-void acquire_sleep_lock() {
+void acquire_sleep_lock(void) {
 	sd_bus_message *msg = NULL;
 	sd_bus_error error = SD_BUS_ERROR_NULL;
 	struct sd_bus *bus;
@@ -161,7 +161,7 @@ static int dbus_event(int fd, uint32_t mask, void *data) {
 	return 1;
 }
 
-void setup_sleep_listener() {
+void setup_sleep_listener(void) {
 	struct sd_bus *bus;
 
 	int ret = sd_bus_default_system(&bus);
@@ -388,7 +388,9 @@ int main(int argc, char *argv[]) {
 
 	state.display = wl_display_connect(NULL);
 	if (state.display == NULL) {
-		wlr_log(WLR_ERROR, "Failed to create display");
+		wlr_log(WLR_ERROR, "Unable to connect to the compositor. "
+				"If your compositor is running, check or set the "
+				"WAYLAND_DISPLAY environment variable.");
 		return -3;
 	}
 

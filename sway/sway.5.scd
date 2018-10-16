@@ -71,6 +71,9 @@ The following commands may only be used in the configuration file.
 	Executes custom background _command_. Default is _swaybg_. Refer to
 	*output* below for more information.
 
+	It can be disabled by setting the command to a single dash:
+	_swaybg\_command -_
+
 *swaynag\_command* <command>
 	Executes custom command for _swaynag_. Default is _swaynag_. Additional
 	arguments may be appended to the end. This should only be used to either
@@ -78,17 +81,21 @@ The following commands may only be used in the configuration file.
 	arguments. This should be placed at the top of the config for the best
 	results.
 
+	It can be disabled by setting the command to a single dash:
+	_swaynag\_command -_
+
 The following commands cannot be used directly in the configuration file.
 They are expected to be used with *bindsym* or at runtime through *swaymsg*(1).
 
-*border* normal|pixel [<n>]
+*border* none|normal|csd|pixel [<n>]
 	Set border style for focused window. _normal_ includes a border of
 	thickness _n_ and a title bar. _pixel_ is a border without title bar _n_
-	pixels thick. Default is _normal_ with border thickness 2.
+	pixels thick. Default is _normal_ with border thickness 2. _csd_ is short
+	for client-side-decorations, which allows the client to draw its own
+	decorations.
 
-*border* none|toggle
-	Set border style for focused window to _none_ or _toggle_ between the
-	available border styles: _normal_, _pixel_, _none_.
+*border* toggle
+	Cycles through the available border styles.
 
 *exit*
 	Exit sway and end your Wayland session.
@@ -414,26 +421,20 @@ The default colors are:
 	_focus\_wrapping force_. This is only available for convenience. Please
 	use _focus\_wrapping_ instead when possible.
 
-*gaps* edge\_gaps on|off|toggle
-	When _on_, gaps will be added between windows and workspace edges if the
-	inner gap is nonzero. When _off_, gaps will only be added between views.
-	_toggle_ cannot be used in the configuration file.
-
-*gaps* <amount>
-	Sets _amount_ pixels of gap between windows and around each workspace.
-
 *gaps* inner|outer <amount>
-	Sets default _amount_ pixels of _inner_ or _outer_ gap, where the former
-	affects spacing between views and the latter affects the space around each
-	workspace.
+	Sets default _amount_ pixels of _inner_ or _outer_ gap, where the inner
+	affects spacing around each view and outer affects the spacing around each
+	workspace. Outer gaps are in addition to inner gaps. To reduce or remove
+	outer gaps, outer gaps can be set to a negative value.
 
-*gaps* inner|outer all|workspace|current set|plus|minus <amount>
-	Changes the gaps for the _inner_ or _outer_ gap. _all_ changes the gaps for
-	all views or workspace, _workspace_ changes gaps for all views in current
-	workspace (or current workspace), and _current_ changes gaps for the current
-	view or workspace.
+	This affects new workspaces only, and is used when the workspace doesn't
+	have its own gaps settings (see: workspace <ws> gaps inner|outer <amount>).
 
-*hide\_edge\_borders* none|vertical|horizontal|both|smart
+*gaps* inner|outer all|current set|plus|minus <amount>
+	Changes the _inner_ or _outer_ gaps for either _all_ workspaces or the
+	_current_ workspace.
+
+*hide\_edge\_borders* none|vertical|horizontal|both|smart|smart\_no\_gaps
 	Hides window borders adjacent to the screen edges. Default is _none_.
 
 *input* <input\_device> <input-subcommands...>
@@ -442,6 +443,11 @@ The default colors are:
 	\* may be used in lieu of a specific device name to configure all input
 	devices. A list of input device names may be obtained via *swaymsg -t
 	get\_inputs*.
+
+*raise\_floating* yes|no
+	Controls the behaviour of floating windows. A _yes_ (the default) will
+	raise windows on gaining focus. A _no_ will only raise floating windows
+	by clicking anywhere in the window.
 
 *seat* <seat> <seat-subcommands...>
 	For details on seat subcommands, see *sway-input*(5).
@@ -457,6 +463,12 @@ The default colors are:
 
 *kill*
 	Kills (closes) the currently focused container and all of its children.
+
+*smart\_borders* on|no\_gaps|off
+	If smart\_borders are _on_, borders will only be enabled if the workspace
+	only has one visible child (identical to _hide\_edge\_borders_ smart). If
+	smart\_borders is set to _no\_gaps_, borders will only be enabled if the
+	workspace only has one visible child and gaps greater than zero.
 
 *smart\_gaps* on|off
 	If smart\_gaps are _on_ gaps will only be enabled if a workspace has more
@@ -477,68 +489,20 @@ The default colors are:
 	If _--pango\_markup_ is given, then _mode_ will be interpreted as pango
 	markup.
 
-*mouse\_warping* output|none
+*mouse\_warping* output|container|none
 	If _output_ is specified, the mouse will be moved to new outputs as you
-	move focus between them. Default is _output_.
+	move focus between them. If _container_ is specified, the mouse will be
+	moved to the middle of the container on switch. Default is _output_.
 
 *no\_focus* <criteria>
 	Prevents windows matching <criteria> from being focused automatically when
 	they're created. This has no effect on the first window in a workspace.
 
-*output* <name> mode|resolution|res <WIDTHxHEIGHT>[@<RATE>[Hz]]
-	Configures the specified output to use the given mode. Modes are a
-	combination of width and height (in pixels) and a refresh rate that your
-	display can be configured to use. For a list of available modes for each
-	output, use *swaymsg -t get\_outputs*.
-
-	Examples:
-
-		output HDMI-A-1 mode 1920x1080
-
-		output HDMI-A-1 mode 1920x1080@60Hz
-
-*output* <name> position|pos <X> <Y>
-	Places the specified output at the specific position in the global
-	coordinate space.
-
-*output* <name> scale <factor>
-	Scales the specified output by the specified scale _factor_. An integer is
-	recommended, but fractional values are also supported. If a fractional
-	value are specified, be warned that it is not possible to faithfully
-	represent the contents of your windows - they will be rendered at the next
-	highest integral scale factor and downscaled. You may be better served by
-	setting an integral scale factor and adjusting the font size of your
-	applications to taste.
-
-*output* <name> background|bg <file> <mode> [<fallback\_color>]
-	Sets the wallpaper for the given output to the specified file, using the
-	given scaling mode (one of "stretch", "fill", "fit", "center", "tile"). If
-	the specified file cannot be accessed or if the image does fill the entire
-	output, a fallback color may be provided to cover the rest of the output.
-	__fallback\_color__ should be specified as _#RRGGBB_. Alpha is not
-	supported.
-
-**output** <name> background|bg <color> solid\_color
-	Sets the background of the given output to the specified color. _color_
-	should be specified as _#RRGGBB_. Alpha is not supported.
-
-**output** <name> transform <transform>
-	Sets the background transform to the given value. Can be one of "90", "180",
-	"270" for rotation; or "flipped", "flipped-90", "flipped-180", "flipped-270"
-	to apply a rotation and flip, or "normal" to apply no transform.
-
-*output* <name> disable|enable
-	Enables or disables the specified output (all outputs are enabled by
-	default).
-
-*NOTES FOR THE OUTPUT COMMANDS*
-
-You may combine output commands into one, like so:
-
-	output HDMI-A-1 mode 1920x1080 pos 1920,0 bg ~/wallpaper.png stretch
-
-You can get a list of output names with *swaymsg -t get\_outputs*. You may also
-match any output by using the output name "\*".
+*popup\_during\_fullscreen* smart|ignore|leave\_fullscreen
+	Determines what to do when a fullscreen view opens a dialog.
+	If _smart_ (the default), the dialog will be displayed. If _ignore_, the
+	dialog will not be rendered. If _leave\_fullscreen_, the view will exit
+	fullscreen mode and the dialog will be rendered.
 
 *set* $<name> <value>
 	Sets variable $_name_ to _value_. You can use the new variable in the
@@ -577,8 +541,12 @@ match any output by using the output name "\*".
 *workspace* prev\_on\_output|next\_on\_output
 	Switches to the next workspace on the current output.
 
-*workspace* back_and_forth
+*workspace* back\_and\_forth
 	Switches to the previously focused workspace.
+
+*workspace* <name> gaps inner|outer <amount>
+	Specifies that workspace _name_ should have the given gaps settings when it
+	is created.
 
 *workspace* <name> output <output>
 	Specifies that workspace _name_ should be shown on the specified _output_.
@@ -591,6 +559,18 @@ match any output by using the output name "\*".
 
 *workspace\_layout* default|stacking|tabbed
 	Specifies the initial layout for new workspaces.
+
+# BAR CONTROL
+
+*bar hidden\_state* hide|show|toggle [<bar\_id>]
+	Sets the hidden state of the bar (see *sway-bar*(5)), either individually,
+	by specifying a bar id, or if none is given, for all bar instances.
+	_toggle_ switches between _hide_ and _show_.
+
+*bar mode* dock|hide|invisible|toggle [<bar\_id>]
+	Sets the mode of the bar (see *sway-bar*(5)), either individually,
+	by specifying a bar id, or if none is given, for all bar instances.
+	_toggle_ switches between _dock_ and _hide_.
 
 # CRITERIA
 

@@ -30,7 +30,7 @@
 // when dragging to the edge of a layout container.
 #define DROP_LAYOUT_BORDER 30
 
-static uint32_t get_current_time_msec() {
+static uint32_t get_current_time_msec(void) {
 	struct timespec now;
 	clock_gettime(CLOCK_MONOTONIC, &now);
 	return now.tv_nsec / 1000;
@@ -98,6 +98,18 @@ static struct sway_node *node_at_coords(
 		return NULL;
 	}
 	if (ws->fullscreen) {
+		// Try transient containers
+		for (int i = 0; i < ws->floating->length; ++i) {
+			struct sway_container *floater = ws->floating->items[i];
+			if (container_is_transient_for(floater, ws->fullscreen)) {
+				struct sway_container *con = tiling_container_at(
+						&floater->node, lx, ly, surface, sx, sy);
+				if (con) {
+					return &con->node;
+				}
+			}
+		}
+		// Try fullscreen container
 		struct sway_container *con =
 			tiling_container_at(&ws->fullscreen->node, lx, ly, surface, sx, sy);
 		if (con) {
@@ -175,7 +187,8 @@ static enum wlr_edges find_edge(struct sway_container *cont,
 		return WLR_EDGE_NONE;
 	}
 	struct sway_view *view = cont->view;
-	if (view->border == B_NONE || !view->border_thickness || view->using_csd) {
+	if (view->border == B_NONE || !view->border_thickness ||
+			view->border == B_CSD) {
 		return WLR_EDGE_NONE;
 	}
 
@@ -566,15 +579,15 @@ void cursor_send_pointer_motion(struct sway_cursor *cursor, uint32_t time_msec,
 	struct wlr_surface *surface = NULL;
 	double sx, sy;
 
-	// Find the node beneath the pointer's previous position
-	struct sway_node *prev_node = node_at_coords(seat,
-			cursor->previous.x, cursor->previous.y, &surface, &sx, &sy);
+	struct sway_node *prev_node = cursor->previous.node;
+	struct sway_node *node = node_at_coords(seat,
+			cursor->cursor->x, cursor->cursor->y, &surface, &sx, &sy);
+
 	// Update the stored previous position
 	cursor->previous.x = cursor->cursor->x;
 	cursor->previous.y = cursor->cursor->y;
+	cursor->previous.node = node;
 
-	struct sway_node *node = node_at_coords(seat,
-			cursor->cursor->x, cursor->cursor->y, &surface, &sx, &sy);
 	if (node && config->focus_follows_mouse && allow_refocusing) {
 		struct sway_node *focus = seat_get_focus(seat);
 		if (focus && node->type == N_WORKSPACE) {
@@ -753,11 +766,12 @@ void dispatch_cursor_button(struct sway_cursor *cursor,
 	}
 	struct sway_seat *seat = cursor->seat;
 
-	// Handle ending seat operation
-	if (cursor->seat->operation != OP_NONE &&
-			button == cursor->seat->op_button && state == WLR_BUTTON_RELEASED) {
-		seat_end_mouse_operation(seat);
-		seat_pointer_notify_button(seat, time_msec, button, state);
+	// Handle existing seat operation
+	if (cursor->seat->operation != OP_NONE) {
+		if (button == cursor->seat->op_button && state == WLR_BUTTON_RELEASED) {
+			seat_end_mouse_operation(seat);
+			seat_pointer_notify_button(seat, time_msec, button, state);
+		}
 		return;
 	}
 
@@ -863,6 +877,7 @@ void dispatch_cursor_button(struct sway_cursor *cursor,
 			while (cont->parent) {
 				cont = cont->parent;
 			}
+			seat_set_focus_container(seat, cont);
 			seat_begin_move_floating(seat, cont, button);
 			return;
 		}
