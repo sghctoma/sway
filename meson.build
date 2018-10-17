@@ -171,7 +171,7 @@ config.set('prefix', prefix)
 if prefix == '/usr'
 	config.set('sysconfdir', '/etc')
 else
-	config.set('sysconfdir', join_path(prefix, sysconfdir))
+	config.set('sysconfdir', join_paths(prefix, sysconfdir))
 endif
 
 configure_file(
