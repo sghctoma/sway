@@ -1,4 +1,5 @@
 #define _XOPEN_SOURCE 700
+#include <assert.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -139,60 +140,17 @@ bool parse_boolean(const char *boolean, bool current) {
 	return false;
 }
 
-char* resolve_path(const char* path) {
-	struct stat sb;
-	ssize_t r;
-	int i;
-	char *current = NULL;
-	char *resolved = NULL;
-
-	if(!(current = strdup(path))) {
-		return NULL;
+enum wlr_direction opposite_direction(enum wlr_direction d) {
+	switch (d) {
+	case WLR_DIRECTION_UP:
+		return WLR_DIRECTION_DOWN;
+	case WLR_DIRECTION_DOWN:
+		return WLR_DIRECTION_UP;
+	case WLR_DIRECTION_RIGHT:
+		return WLR_DIRECTION_LEFT;
+	case WLR_DIRECTION_LEFT:
+		return WLR_DIRECTION_RIGHT;
 	}
-	for (i = 0; i < 16; ++i) {
-		if (lstat(current, &sb) == -1) {
-			goto failed;
-		}
-		if((sb.st_mode & S_IFMT) != S_IFLNK) {
-			return current;
-		}
-		if (!(resolved = malloc(sb.st_size + 1))) {
-			goto failed;
-		}
-		r = readlink(current, resolved, sb.st_size);
-		if (r == -1 || r > sb.st_size) {
-			goto failed;
-		}
-		resolved[r] = '\0';
-		free(current);
-		current = strdup(resolved);
-		free(resolved);
-		resolved = NULL;
-	}
-
-failed:
-	free(resolved);
-	free(current);
-	return NULL;
-}
-
-bool sway_dir_to_wlr(enum movement_direction dir, enum wlr_direction *out) {
-	switch (dir) {
-	case MOVE_UP:
-		*out = WLR_DIRECTION_UP;
-		break;
-	case MOVE_DOWN:
-		*out = WLR_DIRECTION_DOWN;
-		break;
-	case MOVE_LEFT:
-		*out = WLR_DIRECTION_LEFT;
-		break;
-	case MOVE_RIGHT:
-		*out = WLR_DIRECTION_RIGHT;
-		break;
-	default:
-		return false;
-	}
-
-	return true;
+	assert(false);
+	return 0;
 }

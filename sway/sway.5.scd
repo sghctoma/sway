@@ -69,7 +69,7 @@ The following commands may only be used in the configuration file.
 
 *swaybg\_command* <command>
 	Executes custom background _command_. Default is _swaybg_. Refer to
-	*output* below for more information.
+	*sway-output*(5) for more information.
 
 	It can be disabled by setting the command to a single dash:
 	_swaybg\_command -_
@@ -132,6 +132,10 @@ They are expected to be used with *bindsym* or at runtime through *swaymsg*(1).
 
 *fullscreen*
 	Toggles fullscreen for the focused view.
+
+*gaps* inner|outer all|current set|plus|minus <amount>
+	Changes the _inner_ or _outer_ gaps for either _all_ workspaces or the
+	_current_ workspace.
 
 *layout* default|splith|splitv|stacking|tabbed
 	Sets the layout mode of the focused container.
@@ -257,20 +261,23 @@ runtime.
 
 		for\_window <criteria> move container to output <output>
 
-*bindsym* [--release|--locked] <key combo> <command>
+*bindsym* [--release|--locked] [--input-device=<device>] <key combo> <command>
 	Binds _key combo_ to execute the sway command _command_ when pressed. You
 	may use XKB key names here (*xev*(1) is a good tool for discovering these).
 	With the flag _--release_, the command is executed when the key combo is
 	released. Unless the flag _--locked_ is set, the command will not be run
-	when a screen locking program is active.
+	when a screen locking program is active. If _input-device_ is given, the
+	binding will only be executed for that input device and will be executed
+	instead of any binding that is generic to all devices.
 
 	Example:
-
+```
 		# Execute firefox when alt, shift, and f are pressed together
 		bindsym Mod1+Shift+f exec firefox
+```
 
-	*bindcode* [--release|--locked] <code> <command> is also available for
-	binding with key codes instead of key names.
+	*bindcode* [--release|--locked] [--input-device=<device>] <code> <command>
+	is also available for binding with key codes instead of key names.
 
 *client.<class>* <border> <background> <text> <indicator> <child\_border>
 	Configures the color of window borders and title bars. All 5 colors are
@@ -361,6 +368,7 @@ The default colors are:
 :  #000000
 :  #0c0c0c
 
+
 *debuglog* on|off|toggle
 	Enables, disables or toggles debug logging. _toggle_ cannot be used in the
 	configuration file.
@@ -430,10 +438,6 @@ The default colors are:
 	This affects new workspaces only, and is used when the workspace doesn't
 	have its own gaps settings (see: workspace <ws> gaps inner|outer <amount>).
 
-*gaps* inner|outer all|current set|plus|minus <amount>
-	Changes the _inner_ or _outer_ gaps for either _all_ workspaces or the
-	_current_ workspace.
-
 *hide\_edge\_borders* none|vertical|horizontal|both|smart|smart\_no\_gaps
 	Hides window borders adjacent to the screen edges. Default is _none_.
 
@@ -443,11 +447,6 @@ The default colors are:
 	\* may be used in lieu of a specific device name to configure all input
 	devices. A list of input device names may be obtained via *swaymsg -t
 	get\_inputs*.
-
-*raise\_floating* yes|no
-	Controls the behaviour of floating windows. A _yes_ (the default) will
-	raise windows on gaining focus. A _no_ will only raise floating windows
-	by clicking anywhere in the window.
 
 *seat* <seat> <seat-subcommands...>
 	For details on seat subcommands, see *sway-input*(5).
@@ -497,6 +496,12 @@ The default colors are:
 *no\_focus* <criteria>
 	Prevents windows matching <criteria> from being focused automatically when
 	they're created. This has no effect on the first window in a workspace.
+
+*output* <output\_name> <output-subcommands...>
+	For details on output subcommands, see *sway-output*(5).
+
+	\* may be used in lieu of a specific output name to configure all outputs.
+	A list of output names may be obtained via *swaymsg -t get\_outputs*.
 
 *popup\_during\_fullscreen* smart|ignore|leave\_fullscreen
 	Determines what to do when a fullscreen view opens a dialog.
@@ -672,4 +677,4 @@ The following attributes may be matched with:
 
 # SEE ALSO
 
-*sway*(1) *sway-input*(5) *sway-bar*(5)
+*sway*(1) *sway-input*(5) *sway-output*(5) *sway-bar*(5)

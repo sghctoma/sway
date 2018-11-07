@@ -47,11 +47,11 @@ enum sway_seat_operation {
 struct sway_seat {
 	struct wlr_seat *wlr_seat;
 	struct sway_cursor *cursor;
-	struct sway_input_manager *input;
 
 	bool has_focus;
 	struct wl_list focus_stack; // list of containers in focus order
 	struct sway_workspace *workspace;
+	char *prev_workspace_name; // for workspace back_and_forth
 
 	// If the focused layer is set, views cannot receive keyboard focus
 	struct wlr_layer_surface_v1 *focused_layer;
@@ -89,8 +89,7 @@ struct sway_seat {
 	struct wl_list link; // input_manager::seats
 };
 
-struct sway_seat *seat_create(struct sway_input_manager *input,
-		const char *seat_name);
+struct sway_seat *seat_create(const char *seat_name);
 
 void seat_destroy(struct sway_seat *seat);
 
@@ -120,9 +119,6 @@ void seat_set_focus_workspace(struct sway_seat *seat,
  * with the real focus.
  */
 void seat_set_raw_focus(struct sway_seat *seat, struct sway_node *node);
-
-void seat_set_focus_warp(struct sway_seat *seat,
-		struct sway_node *node, bool warp);
 
 void seat_set_focus_surface(struct sway_seat *seat,
 		struct wlr_surface *surface, bool unfocus);
@@ -204,5 +200,7 @@ void seat_end_mouse_operation(struct sway_seat *seat);
 
 void seat_pointer_notify_button(struct sway_seat *seat, uint32_t time_msec,
 		uint32_t button, enum wlr_button_state state);
+
+void seat_consider_warp_to_focus(struct sway_seat *seat);
 
 #endif

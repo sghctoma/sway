@@ -8,6 +8,7 @@
 #include "sway/decoration.h"
 #include "sway/desktop.h"
 #include "sway/desktop/transaction.h"
+#include "sway/input/cursor.h"
 #include "sway/input/input-manager.h"
 #include "sway/input/seat.h"
 #include "sway/output.h"
@@ -24,9 +25,12 @@ static void popup_get_root_coords(struct sway_view_child *child,
 	struct sway_xdg_popup_v6 *popup = (struct sway_xdg_popup_v6 *)child;
 	struct wlr_xdg_surface_v6 *surface = popup->wlr_xdg_surface_v6;
 
+	int x_offset = -child->view->geometry.x - surface->geometry.x;
+	int y_offset = -child->view->geometry.y - surface->geometry.y;
+
 	wlr_xdg_popup_v6_get_toplevel_coords(surface->popup,
-		-surface->geometry.x + surface->popup->geometry.x,
-		-surface->geometry.y + surface->popup->geometry.y,
+		x_offset + surface->popup->geometry.x,
+		y_offset + surface->popup->geometry.y,
 		root_sx, root_sy);
 }
 
@@ -402,25 +406,14 @@ static void handle_map(struct wl_listener *listener, void *data) {
 		view->natural_width = view->wlr_xdg_surface_v6->surface->current.width;
 		view->natural_height = view->wlr_xdg_surface_v6->surface->current.height;
 	}
-
-	view_map(view, view->wlr_xdg_surface_v6->surface);
-
 	struct sway_server_decoration *deco =
-		decoration_from_surface(xdg_surface->surface);
-	bool csd = !deco || deco->wlr_server_decoration->mode ==
-			WLR_SERVER_DECORATION_MANAGER_MODE_CLIENT;
-	view_update_csd_from_client(view, csd);
+			decoration_from_surface(xdg_surface->surface);
+	bool csd = !deco || deco->wlr_server_decoration->mode
+		== WLR_SERVER_DECORATION_MANAGER_MODE_CLIENT;
 
-	if (xdg_surface->toplevel->client_pending.fullscreen) {
-		container_set_fullscreen(view->container, true);
-		arrange_workspace(view->container->workspace);
-	} else {
-		if (view->container->parent) {
-			arrange_container(view->container->parent);
-		} else if (view->container->workspace) {
-			arrange_workspace(view->container->workspace);
-		}
-	}
+	view_map(view, view->wlr_xdg_surface_v6->surface,
+		xdg_surface->toplevel->client_pending.fullscreen, csd);
+
 	transaction_commit_dirty();
 
 	xdg_shell_v6_view->commit.notify = handle_commit;

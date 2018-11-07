@@ -8,6 +8,7 @@
 #include "log.h"
 #include "sway/desktop.h"
 #include "sway/desktop/transaction.h"
+#include "sway/input/cursor.h"
 #include "sway/input/input-manager.h"
 #include "sway/input/seat.h"
 #include "sway/output.h"
@@ -23,6 +24,11 @@ static const char *atom_map[ATOM_LAST] = {
 	"_NET_WM_WINDOW_TYPE_UTILITY",
 	"_NET_WM_WINDOW_TYPE_TOOLBAR",
 	"_NET_WM_WINDOW_TYPE_SPLASH",
+	"_NET_WM_WINDOW_TYPE_MENU",
+	"_NET_WM_WINDOW_TYPE_DROPDOWN_MENU",
+	"_NET_WM_WINDOW_TYPE_POPUP_MENU",
+	"_NET_WM_WINDOW_TYPE_TOOLTIP",
+	"_NET_WM_WINDOW_TYPE_NOTIFICATION",
 	"_NET_WM_STATE_MODAL",
 };
 
@@ -70,9 +76,8 @@ static void unmanaged_handle_map(struct wl_listener *listener, void *data) {
 	desktop_damage_surface(xsurface->surface, surface->lx, surface->ly, true);
 
 	if (wlr_xwayland_or_surface_wants_focus(xsurface)) {
-		struct sway_seat *seat = input_manager_current_seat(input_manager);
-		struct wlr_xwayland *xwayland =
-			seat->input->server->xwayland.wlr_xwayland;
+		struct sway_seat *seat = input_manager_current_seat();
+		struct wlr_xwayland *xwayland = server.xwayland.wlr_xwayland;
 		wlr_xwayland_set_seat(xwayland, seat->wlr_seat);
 		seat_set_focus_surface(seat, xsurface->surface, false);
 	}
@@ -86,7 +91,7 @@ static void unmanaged_handle_unmap(struct wl_listener *listener, void *data) {
 	wl_list_remove(&surface->link);
 	wl_list_remove(&surface->commit.link);
 
-	struct sway_seat *seat = input_manager_current_seat(input_manager);
+	struct sway_seat *seat = input_manager_current_seat();
 	if (seat->wlr_seat->keyboard_state.focused_surface ==
 			xsurface->surface) {
 		// Restore focus
@@ -167,6 +172,11 @@ static uint32_t get_int_prop(struct sway_view *view, enum sway_view_prop prop) {
 	switch (prop) {
 	case VIEW_PROP_X11_WINDOW_ID:
 		return view->wlr_xwayland_surface->window_id;
+	case VIEW_PROP_X11_PARENT_ID:
+		if (view->wlr_xwayland_surface->parent) {
+			return view->wlr_xwayland_surface->parent->window_id;
+		}
+		return 0;
 	case VIEW_PROP_WINDOW_TYPE:
 		return *view->wlr_xwayland_surface->window_type;
 	default:
@@ -235,7 +245,7 @@ static bool wants_floating(struct sway_view *view) {
 
 	struct wlr_xwayland_surface_size_hints *size_hints = surface->size_hints;
 	if (size_hints != NULL &&
-			size_hints->min_width != 0 && size_hints->min_height != 0 &&
+			size_hints->min_width > 0 && size_hints->min_height > 0 &&
 			(size_hints->max_width == size_hints->min_width ||
 			size_hints->max_height == size_hints->min_height)) {
 		return true;
@@ -405,18 +415,8 @@ static void handle_map(struct wl_listener *listener, void *data) {
 	xwayland_view->commit.notify = handle_commit;
 
 	// Put it back into the tree
-	view_map(view, xsurface->surface);
+	view_map(view, xsurface->surface, xsurface->fullscreen, false);
 
-	if (xsurface->fullscreen) {
-		container_set_fullscreen(view->container, true);
-		arrange_workspace(view->container->workspace);
-	} else {
-		if (view->container->parent) {
-			arrange_container(view->container->parent);
-		} else if (view->container->workspace) {
-			arrange_workspace(view->container->workspace);
-		}
-	}
 	transaction_commit_dirty();
 }
 
@@ -467,7 +467,7 @@ static void handle_request_move(struct wl_listener *listener, void *data) {
 	if (!container_is_floating(view->container)) {
 		return;
 	}
-	struct sway_seat *seat = input_manager_current_seat(input_manager);
+	struct sway_seat *seat = input_manager_current_seat();
 	seat_begin_move_floating(seat, view->container, seat->last_button);
 }
 
@@ -483,7 +483,7 @@ static void handle_request_resize(struct wl_listener *listener, void *data) {
 		return;
 	}
 	struct wlr_xwayland_resize_event *e = data;
-	struct sway_seat *seat = input_manager_current_seat(input_manager);
+	struct sway_seat *seat = input_manager_current_seat();
 	seat_begin_resize_floating(seat, view->container,
 			seat->last_button, e->edges);
 }

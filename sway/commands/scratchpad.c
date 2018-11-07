@@ -8,7 +8,7 @@
 #include "sway/tree/workspace.h"
 
 static void scratchpad_toggle_auto(void) {
-	struct sway_seat *seat = input_manager_current_seat(input_manager);
+	struct sway_seat *seat = input_manager_current_seat();
 	struct sway_container *focus = seat_get_focused_container(seat);
 	struct sway_workspace *ws = seat_get_focused_workspace(seat);
 
@@ -86,6 +86,10 @@ struct cmd_results *cmd_scratchpad(int argc, char **argv) {
 	if (strcmp(argv[0], "show") != 0) {
 		return cmd_results_new(CMD_INVALID, "scratchpad",
 				"Expected 'scratchpad show'");
+	}
+	if (!root->outputs->length) {
+		return cmd_results_new(CMD_INVALID, "scratchpad",
+				"Can't run this command while there's no outputs connected.");
 	}
 	if (!root->scratchpad->length) {
 		return cmd_results_new(CMD_INVALID, "scratchpad",

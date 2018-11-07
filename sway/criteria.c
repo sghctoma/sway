@@ -121,8 +121,9 @@ static bool criteria_matches_view(struct criteria *criteria,
 
 	if (criteria->con_mark) {
 		bool exists = false;
-		for (int i = 0; i < view->marks->length; ++i) {
-			if (regex_cmp(view->marks->items[i], criteria->con_mark) == 0) {
+		struct sway_container *con = view->container;
+		for (int i = 0; i < con->marks->length; ++i) {
+			if (regex_cmp(con->marks->items[i], criteria->con_mark) == 0) {
 				exists = true;
 				break;
 			}
@@ -286,6 +287,16 @@ static enum atom_name parse_window_type(const char *type) {
 		return NET_WM_WINDOW_TYPE_TOOLBAR;
 	} else if (strcasecmp(type, "splash") == 0) {
 		return NET_WM_WINDOW_TYPE_SPLASH;
+	} else if (strcasecmp(type, "menu") == 0) {
+		return NET_WM_WINDOW_TYPE_MENU;
+	} else if (strcasecmp(type, "dropdown_menu") == 0) {
+		return NET_WM_WINDOW_TYPE_DROPDOWN_MENU;
+	} else if (strcasecmp(type, "popup_menu") == 0) {
+		return NET_WM_WINDOW_TYPE_POPUP_MENU;
+	} else if (strcasecmp(type, "tooltip") == 0) {
+		return NET_WM_WINDOW_TYPE_TOOLTIP;
+	} else if (strcasecmp(type, "notification") == 0) {
+		return NET_WM_WINDOW_TYPE_NOTIFICATION;
 	}
 	return ATOM_LAST; // ie. invalid
 }
@@ -356,7 +367,7 @@ static enum criteria_token token_from_name(char *name) {
  * criteria is only executed once per view.
  */
 static char *get_focused_prop(enum criteria_token token) {
-	struct sway_seat *seat = input_manager_current_seat(input_manager);
+	struct sway_seat *seat = input_manager_current_seat();
 	struct sway_container *focus = seat_get_focused_container(seat);
 
 	if (!focus || !focus->view) {

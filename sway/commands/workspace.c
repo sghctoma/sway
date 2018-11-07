@@ -108,6 +108,9 @@ struct cmd_results *cmd_workspace(int argc, char **argv) {
 	} else {
 		if (config->reading || !config->active) {
 			return cmd_results_new(CMD_DEFER, "workspace", NULL);
+		} else if (!root->outputs->length) {
+			return cmd_results_new(CMD_INVALID, "workspace",
+					"Can't run this command while there's no outputs connected.");
 		}
 
 		bool no_auto_back_and_forth = false;
@@ -142,12 +145,13 @@ struct cmd_results *cmd_workspace(int argc, char **argv) {
 				strcasecmp(argv[0], "current") == 0) {
 			ws = workspace_by_name(argv[0]);
 		} else if (strcasecmp(argv[0], "back_and_forth") == 0) {
-			if (!prev_workspace_name) {
+			struct sway_seat *seat = config->handler_context.seat;
+			if (!seat->prev_workspace_name) {
 				return cmd_results_new(CMD_INVALID, "workspace",
 						"There is no previous workspace");
 			}
 			if (!(ws = workspace_by_name(argv[0]))) {
-				ws = workspace_create(NULL, prev_workspace_name);
+				ws = workspace_create(NULL, seat->prev_workspace_name);
 			}
 		} else {
 			char *name = join_args(argv, argc);
@@ -157,6 +161,7 @@ struct cmd_results *cmd_workspace(int argc, char **argv) {
 			free(name);
 		}
 		workspace_switch(ws, no_auto_back_and_forth);
+		seat_consider_warp_to_focus(config->handler_context.seat);
 	}
 	return cmd_results_new(CMD_SUCCESS, NULL, NULL);
 }

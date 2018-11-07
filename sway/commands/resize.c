@@ -94,7 +94,7 @@ static void calculate_constraints(int *min_width, int *max_width,
 		*min_height = config->floating_minimum_height;
 	}
 
-	if (config->floating_maximum_width == -1) { // no maximum
+	if (config->floating_maximum_width == -1 || !con->workspace) { // no max
 		*max_width = INT_MAX;
 	} else if (config->floating_maximum_width == 0) { // automatic
 		*max_width = con->workspace->width;
@@ -102,7 +102,7 @@ static void calculate_constraints(int *min_width, int *max_width,
 		*max_width = config->floating_maximum_width;
 	}
 
-	if (config->floating_maximum_height == -1) { // no maximum
+	if (config->floating_maximum_height == -1 || !con->workspace) { // no max
 		*max_height = INT_MAX;
 	} else if (config->floating_maximum_height == 0) { // automatic
 		*max_height = con->workspace->height;
@@ -671,6 +671,10 @@ static struct cmd_results *cmd_resize_adjust(int argc, char **argv,
 }
 
 struct cmd_results *cmd_resize(int argc, char **argv) {
+	if (!root->outputs->length) {
+		return cmd_results_new(CMD_INVALID, "resize",
+				"Can't run this command while there's no outputs connected.");
+	}
 	struct sway_container *current = config->handler_context.container;
 	if (!current) {
 		return cmd_results_new(CMD_INVALID, "resize", "Cannot resize nothing");

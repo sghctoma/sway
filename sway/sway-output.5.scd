@@ -13,6 +13,13 @@ You may combine output commands into one, like so:
 You can get a list of output names with *swaymsg -t get\_outputs*. You may also
 match any output by using the output name "\*".
 
+Some outputs may have different names when disconnecting and reconnecting. To
+identify these, the name can be substituted for a string consisting of the make,
+model and serial which you can get from *swaymsg -t get\_outputs*. Each value
+must be separated by one space. For example:
+
+	output "Some Company ABC123 0x00000000" pos 1920,0
+
 # COMMANDS
 
 *output* <name> mode|resolution|res <WIDTHxHEIGHT>[@<RATE>[Hz]]
@@ -52,10 +59,13 @@ match any output by using the output name "\*".
 	Sets the background of the given output to the specified color. _color_
 	should be specified as _#RRGGBB_. Alpha is not supported.
 
-*output* <name> transform <transform>
+*output* <name> transform <transform> [clockwise|anticlockwise]
 	Sets the background transform to the given value. Can be one of "90", "180",
 	"270" for rotation; or "flipped", "flipped-90", "flipped-180", "flipped-270"
-	to apply a rotation and flip, or "normal" to apply no transform.
+	to apply a rotation and flip, or "normal" to apply no transform. If a single
+	output is chosen and a rotation direction is specified 
+	(_clockwise_ or _anticlockwise_) then the transform is added or 
+	subtracted from the current tranform.
 
 *output* <name> disable|enable
 	Enables or disables the specified output (all outputs are enabled by

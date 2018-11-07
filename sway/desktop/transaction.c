@@ -11,6 +11,8 @@
 #include "sway/desktop.h"
 #include "sway/desktop/idle_inhibit_v1.h"
 #include "sway/desktop/transaction.h"
+#include "sway/input/cursor.h"
+#include "sway/input/input-manager.h"
 #include "sway/output.h"
 #include "sway/tree/container.h"
 #include "sway/tree/node.h"
@@ -110,7 +112,7 @@ static void copy_workspace_state(struct sway_workspace *ws,
 	list_cat(state->floating, ws->floating);
 	list_cat(state->tiling, ws->tiling);
 
-	struct sway_seat *seat = input_manager_current_seat(input_manager);
+	struct sway_seat *seat = input_manager_current_seat();
 	state->focused = seat_get_focus(seat) == &ws->node;
 
 	// Set focused_inactive_child to the direct tiling child
@@ -135,6 +137,12 @@ static void copy_container_state(struct sway_container *container,
 	state->is_fullscreen = container->is_fullscreen;
 	state->parent = container->parent;
 	state->workspace = container->workspace;
+	state->border = container->border;
+	state->border_thickness = container->border_thickness;
+	state->border_top = container->border_top;
+	state->border_left = container->border_left;
+	state->border_right = container->border_right;
+	state->border_bottom = container->border_bottom;
 
 	if (container->view) {
 		struct sway_view *view = container->view;
@@ -142,18 +150,12 @@ static void copy_container_state(struct sway_container *container,
 		state->view_y = view->y;
 		state->view_width = view->width;
 		state->view_height = view->height;
-		state->border = view->border;
-		state->border_thickness = view->border_thickness;
-		state->border_top = view->border_top;
-		state->border_left = view->border_left;
-		state->border_right = view->border_right;
-		state->border_bottom = view->border_bottom;
 	} else {
 		state->children = create_list();
 		list_cat(state->children, container->children);
 	}
 
-	struct sway_seat *seat = input_manager_current_seat(input_manager);
+	struct sway_seat *seat = input_manager_current_seat();
 	state->focused = seat_get_focus(seat) == &container->node;
 
 	if (!container->view) {
@@ -294,6 +296,15 @@ static void transaction_apply(struct sway_transaction *transaction) {
 		}
 
 		node->instruction = NULL;
+	}
+
+	if (root->outputs->length) {
+		struct sway_seat *seat;
+		wl_list_for_each(seat, &server.input->seats, link) {
+			if (seat->operation == OP_NONE) {
+				cursor_rebase(seat->cursor);
+			}
+		}
 	}
 }
 

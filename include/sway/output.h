@@ -40,6 +40,7 @@ struct sway_output {
 	struct wl_listener mode;
 	struct wl_listener transform;
 	struct wl_listener scale;
+	struct wl_listener present;
 	struct wl_listener damage_destroy;
 	struct wl_listener damage_frame;
 
@@ -61,7 +62,7 @@ void output_begin_destroy(struct sway_output *output);
 struct sway_output *output_from_wlr_output(struct wlr_output *output);
 
 struct sway_output *output_get_in_direction(struct sway_output *reference,
-		enum movement_direction direction);
+		enum wlr_direction direction);
 
 void output_add_workspace(struct sway_output *output,
 		struct sway_workspace *workspace);
@@ -84,6 +85,8 @@ void output_damage_whole_container(struct sway_output *output,
 	struct sway_container *con);
 
 struct sway_output *output_by_name(const char *name);
+
+struct sway_output *output_by_identifier(const char *identifier);
 
 void output_sort_workspaces(struct sway_output *output);
 

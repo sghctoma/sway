@@ -35,12 +35,16 @@ struct sway_output *workspace_get_initial_output(const char *name) {
 	struct workspace_config *wsc = workspace_find_config(name);
 	if (wsc && wsc->output) {
 		struct sway_output *output = output_by_name(wsc->output);
+		if (!output) {
+			output = output_by_identifier(wsc->output);
+		}
+		
 		if (output) {
 			return output;
 		}
 	}
 	// Otherwise put it on the focused output
-	struct sway_seat *seat = input_manager_current_seat(input_manager);
+	struct sway_seat *seat = input_manager_current_seat();
 	struct sway_workspace *focus = seat_get_focused_workspace(seat);
 	return focus->output;
 }
@@ -119,6 +123,11 @@ void workspace_begin_destroy(struct sway_workspace *workspace) {
 
 	if (workspace->output) {
 		workspace_detach(workspace);
+	} else {
+		int index = list_find(root->saved_workspaces, workspace);
+		if (index != -1) {
+			list_del(root->saved_workspaces, index);
+		}
 	}
 
 	workspace->node.destroying = true;
@@ -126,23 +135,23 @@ void workspace_begin_destroy(struct sway_workspace *workspace) {
 }
 
 void workspace_consider_destroy(struct sway_workspace *ws) {
-	if (ws->tiling->length == 0 && ws->floating->length == 0
-			&& output_get_active_workspace(ws->output) != ws) {
-		workspace_begin_destroy(ws);
+	if (ws->tiling->length || ws->floating->length) {
+		return;
 	}
-}
-
-char *prev_workspace_name = NULL;
-
-void next_name_map(struct sway_container *ws, void *data) {
-	int *count = data;
-	++count;
+	if (ws->output && output_get_active_workspace(ws->output) == ws) {
+		return;
+	}
+	workspace_begin_destroy(ws);
 }
 
 static bool workspace_valid_on_output(const char *output_name,
 		const char *ws_name) {
 	struct workspace_config *wsc = workspace_find_config(ws_name);
-	return !wsc || !wsc->output || strcmp(wsc->output, output_name) == 0;
+	char identifier[128];
+	struct sway_output *output = output_by_name(output_name);
+	output_get_identifier(identifier, sizeof(identifier), output);
+		
+	return !wsc || !wsc->output || strcmp(wsc->output, output_name) == 0 || strcasecmp(identifier, output_name) == 0;
 }
 
 static void workspace_name_from_binding(const struct sway_binding * binding,
@@ -287,7 +296,7 @@ static bool _workspace_by_name(struct sway_workspace *ws, void *data) {
 }
 
 struct sway_workspace *workspace_by_name(const char *name) {
-	struct sway_seat *seat = input_manager_current_seat(input_manager);
+	struct sway_seat *seat = input_manager_current_seat();
 	struct sway_workspace *current = seat_get_focused_workspace(seat);
 
 	if (strcmp(name, "prev") == 0) {
@@ -301,9 +310,12 @@ struct sway_workspace *workspace_by_name(const char *name) {
 	} else if (strcmp(name, "current") == 0) {
 		return current;
 	} else if (strcasecmp(name, "back_and_forth") == 0) {
-		return prev_workspace_name ?
-			root_find_workspace(_workspace_by_name, (void*)prev_workspace_name)
-			: NULL;
+		struct sway_seat *seat = input_manager_current_seat();
+		if (!seat->prev_workspace_name) {
+			return NULL;
+		}
+		return root_find_workspace(_workspace_by_name,
+				(void*)seat->prev_workspace_name);
 	} else {
 		return root_find_workspace(_workspace_by_name, (void*)name);
 	}
@@ -316,7 +328,7 @@ struct sway_workspace *workspace_by_name(const char *name) {
  */
 static struct sway_workspace *workspace_output_prev_next_impl(
 		struct sway_output *output, int dir) {
-	struct sway_seat *seat = input_manager_current_seat(input_manager);
+	struct sway_seat *seat = input_manager_current_seat();
 	struct sway_workspace *workspace = seat_get_focused_workspace(seat);
 
 	int index = list_find(output->workspaces, workspace);
@@ -368,27 +380,28 @@ struct sway_workspace *workspace_prev(struct sway_workspace *current) {
 
 bool workspace_switch(struct sway_workspace *workspace,
 		bool no_auto_back_and_forth) {
-	struct sway_seat *seat = input_manager_current_seat(input_manager);
+	struct sway_seat *seat = input_manager_current_seat();
 	struct sway_workspace *active_ws = seat_get_focused_workspace(seat);
 
 	if (!no_auto_back_and_forth && config->auto_back_and_forth
-			&& active_ws == workspace
-			&& prev_workspace_name) {
-		struct sway_workspace *new_ws = workspace_by_name(prev_workspace_name);
+			&& active_ws == workspace && seat->prev_workspace_name) {
+		struct sway_workspace *new_ws =
+			workspace_by_name(seat->prev_workspace_name);
 		workspace = new_ws ?
 			new_ws :
-			workspace_create(NULL, prev_workspace_name);
+			workspace_create(NULL, seat->prev_workspace_name);
 	}
 
-	if (!prev_workspace_name || (strcmp(prev_workspace_name, active_ws->name)
+	if (!seat->prev_workspace_name ||
+			(strcmp(seat->prev_workspace_name, active_ws->name)
 				&& active_ws != workspace)) {
-		free(prev_workspace_name);
-		prev_workspace_name = malloc(strlen(active_ws->name) + 1);
-		if (!prev_workspace_name) {
+		free(seat->prev_workspace_name);
+		seat->prev_workspace_name = malloc(strlen(active_ws->name) + 1);
+		if (!seat->prev_workspace_name) {
 			wlr_log(WLR_ERROR, "Unable to allocate previous workspace name");
 			return false;
 		}
-		strcpy(prev_workspace_name, active_ws->name);
+		strcpy(seat->prev_workspace_name, active_ws->name);
 	}
 
 	wlr_log(WLR_DEBUG, "Switching to workspace %p:%s",
@@ -399,7 +412,6 @@ bool workspace_switch(struct sway_workspace *workspace,
 	}
 	seat_set_focus(seat, next);
 	arrange_workspace(workspace);
-	cursor_send_pointer_motion(seat->cursor, 0, true);
 	return true;
 }
 
@@ -619,7 +631,7 @@ void workspace_add_gaps(struct sway_workspace *ws) {
 		return;
 	}
 	if (config->smart_gaps) {
-		struct sway_seat *seat = input_manager_get_default_seat(input_manager);
+		struct sway_seat *seat = input_manager_get_default_seat();
 		struct sway_container *focus =
 			seat_get_focus_inactive_tiling(seat, ws);
 		if (focus && !focus->view) {

@@ -18,41 +18,28 @@
 
 // Returns error object, or NULL if check succeeds.
 struct cmd_results *checkarg(int argc, const char *name, enum expected_args type, int val) {
-	struct cmd_results *error = NULL;
+	const char *error_name = NULL;
 	switch (type) {
-	case EXPECTED_MORE_THAN:
-		if (argc > val) {
-			return NULL;
-		}
-		error = cmd_results_new(CMD_INVALID, name, "Invalid %s command "
-			"(expected more than %d argument%s, got %d)",
-			name, val, (char*[2]){"s", ""}[argc==1], argc);
-		break;
 	case EXPECTED_AT_LEAST:
-		if (argc >= val) {
-			return NULL;
+		if (argc < val) {
+			error_name = "at least ";
 		}
-		error = cmd_results_new(CMD_INVALID, name, "Invalid %s command "
-			"(expected at least %d argument%s, got %d)",
-			name, val, (char*[2]){"s", ""}[argc==1], argc);
 		break;
-	case EXPECTED_LESS_THAN:
-		if (argc  < val) {
-			return NULL;
-		};
-		error = cmd_results_new(CMD_INVALID, name, "Invalid %s command "
-			"(expected less than %d argument%s, got %d)",
-			name, val, (char*[2]){"s", ""}[argc==1], argc);
+	case EXPECTED_AT_MOST:
+		if (argc > val) {
+			error_name = "at most ";
+		}
 		break;
 	case EXPECTED_EQUAL_TO:
-		if (argc == val) {
-			return NULL;
-		};
-		error = cmd_results_new(CMD_INVALID, name, "Invalid %s command "
-			"(expected %d arguments, got %d)", name, val, argc);
-		break;
+		if (argc != val) {
+			error_name = "";
+		}
 	}
-	return error;
+	return error_name ?
+		cmd_results_new(CMD_INVALID, name, "Invalid %s command "
+				"(expected %s%d argument%s, got %d)",
+				name, error_name, val, val != 1 ? "s" : "", argc)
+		: NULL;
 }
 
 void apply_seat_config(struct seat_config *seat_config) {
@@ -68,7 +55,7 @@ void apply_seat_config(struct seat_config *seat_config) {
 		list_add(config->seat_configs, seat_config);
 	}
 
-	input_manager_apply_seat_config(input_manager, seat_config);
+	input_manager_apply_seat_config(seat_config);
 }
 
 /* Keep alphabetized */
@@ -110,7 +97,6 @@ static struct cmd_handler handlers[] = {
 	{ "no_focus", cmd_no_focus },
 	{ "output", cmd_output },
 	{ "popup_during_fullscreen", cmd_popup_during_fullscreen },
-	{ "raise_floating", cmd_raise_floating },
 	{ "seat", cmd_seat },
 	{ "set", cmd_set },
 	{ "show_marks", cmd_show_marks },
@@ -240,7 +226,7 @@ struct cmd_results *execute_command(char *_exec, struct sway_seat *seat,
 
 	if (seat == NULL) {
 		// passing a NULL seat means we just pick the default seat
-		seat = input_manager_get_default_seat(input_manager);
+		seat = input_manager_get_default_seat();
 		if (!sway_assert(seat, "could not find a seat to run the command on")) {
 			return NULL;
 		}

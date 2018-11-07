@@ -61,13 +61,13 @@ static void swap_focus(struct sway_container *con1,
 		enum sway_container_layout layout2 = container_parent_layout(con2);
 		if (focus == con1 && (layout2 == L_TABBED || layout2 == L_STACKED)) {
 			if (workspace_is_visible(ws2)) {
-				seat_set_focus_warp(seat, &con2->node, false);
+				seat_set_focus(seat, &con2->node);
 			}
 			seat_set_focus_container(seat, ws1 != ws2 ? con2 : con1);
 		} else if (focus == con2 && (layout1 == L_TABBED
 					|| layout1 == L_STACKED)) {
 			if (workspace_is_visible(ws1)) {
-				seat_set_focus_warp(seat, &con1->node, false);
+				seat_set_focus(seat, &con1->node);
 			}
 			seat_set_focus_container(seat, ws1 != ws2 ? con1 : con2);
 		} else if (ws1 != ws2) {
@@ -108,7 +108,7 @@ static void container_swap(struct sway_container *con1,
 		container_set_fullscreen(con2, false);
 	}
 
-	struct sway_seat *seat = input_manager_get_default_seat(input_manager);
+	struct sway_seat *seat = input_manager_get_default_seat();
 	struct sway_container *focus = seat_get_focused_container(seat);
 	struct sway_workspace *vis1 =
 		output_get_active_workspace(con1->workspace->output);
@@ -116,8 +116,8 @@ static void container_swap(struct sway_container *con1,
 		output_get_active_workspace(con2->workspace->output);
 
 	char *stored_prev_name = NULL;
-	if (prev_workspace_name) {
-		stored_prev_name = strdup(prev_workspace_name);
+	if (seat->prev_workspace_name) {
+		stored_prev_name = strdup(seat->prev_workspace_name);
 	}
 
 	swap_places(con1, con2);
@@ -132,8 +132,8 @@ static void container_swap(struct sway_container *con1,
 	swap_focus(con1, con2, seat, focus);
 
 	if (stored_prev_name) {
-		free(prev_workspace_name);
-		prev_workspace_name = stored_prev_name;
+		free(seat->prev_workspace_name);
+		seat->prev_workspace_name = stored_prev_name;
 	}
 
 	if (fs1) {
@@ -159,8 +159,8 @@ static bool test_id(struct sway_container *container, void *id) {
 }
 
 static bool test_mark(struct sway_container *container, void *mark) {
-	if (container->view && container->view->marks->length) {
-		return !list_seq_find(container->view->marks,
+	if (container->marks->length) {
+		return !list_seq_find(container->marks,
 				(int (*)(const void *, const void *))strcmp, mark);
 	}
 	return false;
@@ -170,6 +170,10 @@ struct cmd_results *cmd_swap(int argc, char **argv) {
 	struct cmd_results *error = NULL;
 	if ((error = checkarg(argc, "swap", EXPECTED_AT_LEAST, 4))) {
 		return error;
+	}
+	if (!root->outputs->length) {
+		return cmd_results_new(CMD_INVALID, "swap",
+				"Can't run this command while there's no outputs connected.");
 	}
 
 	if (strcasecmp(argv[0], "container") || strcasecmp(argv[1], "with")) {

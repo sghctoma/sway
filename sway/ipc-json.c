@@ -118,8 +118,6 @@ static void ipc_json_describe_output(struct sway_output *output,
 			json_object_new_string(wlr_output->serial));
 	json_object_object_add(object, "scale",
 			json_object_new_double(wlr_output->scale));
-	json_object_object_add(object, "refresh",
-			json_object_new_int(wlr_output->refresh));
 	json_object_object_add(object, "transform",
 		json_object_new_string(
 			ipc_json_get_output_transform(wlr_output->transform)));
@@ -142,6 +140,15 @@ static void ipc_json_describe_output(struct sway_output *output,
 	}
 
 	json_object_object_add(object, "modes", modes_array);
+
+	json_object *current_mode_object = json_object_new_object();
+	json_object_object_add(current_mode_object, "width",
+		json_object_new_int(wlr_output->width));
+	json_object_object_add(current_mode_object, "height",
+		json_object_new_int(wlr_output->height));
+	json_object_object_add(current_mode_object, "refresh",
+		json_object_new_int(wlr_output->refresh));
+	json_object_object_add(object, "current_mode", current_mode_object);
 
 	struct sway_node *parent = node_get_parent(&output->node);
 	struct wlr_box parent_box = {0, 0, 0, 0};
@@ -229,14 +236,10 @@ static void ipc_json_describe_view(struct sway_container *c, json_object *object
 	json_object_object_add(object, "app_id",
 			app_id ? json_object_new_string(app_id) : NULL);
 
-	const char *class = view_get_class(c->view);
-	json_object_object_add(object, "class",
-			class ? json_object_new_string(class) : NULL);
-
 	json_object *marks = json_object_new_array();
-	list_t *view_marks = c->view->marks;
-	for (int i = 0; i < view_marks->length; ++i) {
-		json_object_array_add(marks, json_object_new_string(view_marks->items[i]));
+	list_t *con_marks = c->marks;
+	for (int i = 0; i < con_marks->length; ++i) {
+		json_object_array_add(marks, json_object_new_string(con_marks->items[i]));
 	}
 
 	json_object_object_add(object, "marks", marks);
@@ -266,6 +269,32 @@ static void ipc_json_describe_view(struct sway_container *c, json_object *object
 	if (c->view->type == SWAY_VIEW_XWAYLAND) {
 		json_object_object_add(object, "window",
 				json_object_new_int(view_get_x11_window_id(c->view)));
+
+		json_object *window_props = json_object_new_object();
+
+		const char *class = view_get_class(c->view);
+		if (class) {
+			json_object_object_add(window_props, "class", json_object_new_string(class));
+		}
+		const char *instance = view_get_instance(c->view);
+		if (instance) {
+			json_object_object_add(window_props, "instance", json_object_new_string(instance));
+		}
+		if (c->title) {
+			json_object_object_add(window_props, "title", json_object_new_string(c->title));
+		}
+
+		// the transient_for key is always present in i3's output
+		uint32_t parent_id = view_get_x11_parent_id(c->view);
+		json_object_object_add(window_props, "transient_for",
+				parent_id ? json_object_new_int(parent_id) : NULL);
+
+		const char *role = view_get_window_role(c->view);
+		if (role) {
+			json_object_object_add(window_props, "window_role", json_object_new_string(role));
+		}
+
+		json_object_object_add(object, "window_properties", window_props);
 	}
 #endif
 }
@@ -340,7 +369,7 @@ static void focus_inactive_children_iterator(struct sway_node *node,
 }
 
 json_object *ipc_json_describe_node(struct sway_node *node) {
-	struct sway_seat *seat = input_manager_get_default_seat(input_manager);
+	struct sway_seat *seat = input_manager_get_default_seat();
 	bool focused = seat_get_focus(seat) == node;
 
 	json_object *object = json_object_new_object();

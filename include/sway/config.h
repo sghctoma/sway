@@ -43,6 +43,7 @@ enum binding_flags {
 struct sway_binding {
 	enum binding_input_type type;
 	int order;
+	char *input;
 	uint32_t flags;
 	list_t *keys; // sorted in ascending order
 	uint32_t modifiers;
@@ -326,6 +327,12 @@ struct ipc_policy {
 	uint32_t features;
 };
 
+enum focus_follows_mouse_mode {
+	FOLLOWS_NO,
+	FOLLOWS_YES,
+	FOLLOWS_ALWAYS
+};
+
 enum focus_wrapping_mode {
 	WRAP_NO,
 	WRAP_YES,
@@ -377,8 +384,7 @@ struct sway_config {
 	enum sway_popup_during_fullscreen popup_during_fullscreen;
 
 	// Flags
-	bool focus_follows_mouse;
-	bool raise_floating;
+	enum focus_follows_mouse_mode focus_follows_mouse;
 	enum mouse_warping_mode mouse_warping;
 	enum focus_wrapping_mode focus_wrapping;
 	bool active;

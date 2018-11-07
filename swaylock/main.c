@@ -2,6 +2,7 @@
 #define _POSIX_C_SOURCE 200112L
 #include <assert.h>
 #include <ctype.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <getopt.h>
 #include <stdbool.h>
@@ -279,7 +280,10 @@ static void handle_global(void *data, struct wl_registry *registry,
 	} else if (strcmp(interface, wl_seat_interface.name) == 0) {
 		struct wl_seat *seat = wl_registry_bind(
 				registry, name, &wl_seat_interface, 3);
-		wl_seat_add_listener(seat, &seat_listener, state);
+		struct swaylock_seat *swaylock_seat =
+			calloc(1, sizeof(struct swaylock_seat));
+		swaylock_seat->state = state;
+		wl_seat_add_listener(seat, &seat_listener, swaylock_seat);
 	} else if (strcmp(interface, zwlr_layer_shell_v1_interface.name) == 0) {
 		state->layer_shell = wl_registry_bind(
 				registry, name, &zwlr_layer_shell_v1_interface, 1);
@@ -385,7 +389,6 @@ static void load_image(char *arg, struct swaylock_state *state) {
 		return;
 	}
 	wl_list_insert(&state->images, &image->link);
-	state->args.mode = BACKGROUND_MODE_FILL;
 	wlr_log(WLR_DEBUG, "Loaded image %s for output %s",
 			image->path, image->output_name ? image->output_name : "*");
 }
@@ -842,7 +845,9 @@ static int load_config(char *path, struct swaylock_state *state,
 static struct swaylock_state state;
 
 static void display_in(int fd, short mask, void *data) {
-	wl_display_dispatch(state.display);
+	if (wl_display_dispatch(state.display) == -1) {
+		state.run_display = false;
+	}
 }
 
 int main(int argc, char **argv) {
@@ -851,7 +856,7 @@ int main(int argc, char **argv) {
 
 	enum line_mode line_mode = LM_LINE;
 	state.args = (struct swaylock_args){
-		.mode = BACKGROUND_MODE_SOLID_COLOR,
+		.mode = BACKGROUND_MODE_FILL,
 		.font = strdup("sans-serif"),
 		.radius = 50,
 		.thickness = 10,
@@ -926,6 +931,11 @@ int main(int argc, char **argv) {
 	}
 
 	zwlr_input_inhibit_manager_v1_get_inhibitor(state.input_inhibit_manager);
+	if (wl_display_roundtrip(state.display) == -1) {
+		wlr_log(WLR_ERROR, "Exiting - failed to inhibit input:"
+				" is another lockscreen already running?");
+		return 2;
+	}
 
 	if (state.zxdg_output_manager) {
 		struct swaylock_surface *surface;
@@ -957,7 +967,10 @@ int main(int argc, char **argv) {
 
 	state.run_display = true;
 	while (state.run_display) {
-		wl_display_flush(state.display);
+		errno = 0;
+		if (wl_display_flush(state.display) == -1 && errno != EAGAIN) {
+			break;
+		}
 		loop_poll(state.eventloop);
 	}
 

@@ -59,15 +59,15 @@ void root_scratchpad_add_container(struct sway_container *con) {
 	if (!sway_assert(!con->scratchpad, "Container is already in scratchpad")) {
 		return;
 	}
-	con->scratchpad = true;
-	list_add(root->scratchpad, con);
 
 	struct sway_container *parent = con->parent;
 	struct sway_workspace *workspace = con->workspace;
 	container_set_floating(con, true);
 	container_detach(con);
+	con->scratchpad = true;
+	list_add(root->scratchpad, con);
 
-	struct sway_seat *seat = input_manager_current_seat(input_manager);
+	struct sway_seat *seat = input_manager_current_seat();
 	if (parent) {
 		arrange_container(parent);
 		seat_set_focus(seat, seat_get_focus_inactive(seat, &parent->node));
@@ -89,7 +89,7 @@ void root_scratchpad_remove_container(struct sway_container *con) {
 }
 
 void root_scratchpad_show(struct sway_container *con) {
-	struct sway_seat *seat = input_manager_current_seat(input_manager);
+	struct sway_seat *seat = input_manager_current_seat();
 	struct sway_workspace *ws = seat_get_focused_workspace(seat);
 
     // If the current con or any of its parents are in fullscreen mode, we
@@ -127,7 +127,7 @@ void root_scratchpad_show(struct sway_container *con) {
 }
 
 void root_scratchpad_hide(struct sway_container *con) {
-	struct sway_seat *seat = input_manager_current_seat(input_manager);
+	struct sway_seat *seat = input_manager_current_seat();
 	struct sway_node *focus = seat_get_focus(seat);
 	struct sway_workspace *ws = con->workspace;
 
@@ -210,7 +210,7 @@ void root_record_workspace_pid(pid_t pid) {
 		wl_list_init(&pid_workspaces);
 	}
 
-	struct sway_seat *seat = input_manager_current_seat(input_manager);
+	struct sway_seat *seat = input_manager_current_seat();
 	struct sway_workspace *ws = seat_get_focused_workspace(seat);
 	if (!ws) {
 		wlr_log(WLR_DEBUG, "Bailing out, no workspace");

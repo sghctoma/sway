@@ -39,6 +39,7 @@ struct sway_container *container_create(struct sway_view *view) {
 		c->children = create_list();
 		c->current.children = create_list();
 	}
+	c->marks = create_list();
 	c->outputs = create_list();
 
 	wl_signal_init(&c->events.destroy);
@@ -65,6 +66,13 @@ void container_destroy(struct sway_container *con) {
 	list_free(con->children);
 	list_free(con->current.children);
 	list_free(con->outputs);
+
+	list_foreach(con->marks, free);
+	list_free(con->marks);
+	wlr_texture_destroy(con->marks_focused);
+	wlr_texture_destroy(con->marks_focused_inactive);
+	wlr_texture_destroy(con->marks_unfocused);
+	wlr_texture_destroy(con->marks_urgent);
 
 	if (con->view) {
 		if (con->view->container == con) {
@@ -200,7 +208,7 @@ static struct sway_container *container_at_tabbed(struct sway_node *parent,
 	if (ly < box.y || ly > box.y + box.height) {
 		return NULL;
 	}
-	struct sway_seat *seat = input_manager_current_seat(input_manager);
+	struct sway_seat *seat = input_manager_current_seat();
 	list_t *children = node_get_children(parent);
 	if (!children->length) {
 		return NULL;
@@ -234,7 +242,7 @@ static struct sway_container *container_at_stacked(struct sway_node *parent,
 	if (ly < box.y || ly > box.y + box.height) {
 		return NULL;
 	}
-	struct sway_seat *seat = input_manager_current_seat(input_manager);
+	struct sway_seat *seat = input_manager_current_seat();
 	list_t *children = node_get_children(parent);
 
 	// Title bars
@@ -358,7 +366,7 @@ struct sway_container *container_at(struct sway_workspace *workspace,
 		struct wlr_surface **surface, double *sx, double *sy) {
 	struct sway_container *c;
 
-	struct sway_seat *seat = input_manager_current_seat(input_manager);
+	struct sway_seat *seat = input_manager_current_seat();
 	struct sway_container *focus = seat_get_focused_container(seat);
 	bool is_floating = focus && container_is_floating_or_child(focus);
 	// Focused view's popups
@@ -639,8 +647,8 @@ void container_init_floating(struct sway_container *con) {
 		view->y = ws->y + (ws->height - view->height) / 2;
 
 		// If the view's border is B_NONE then these properties are ignored.
-		view->border_top = view->border_bottom = true;
-		view->border_left = view->border_right = true;
+		con->border_top = con->border_bottom = true;
+		con->border_left = con->border_right = true;
 
 		container_set_geometry_from_floating_view(con);
 	}
@@ -651,7 +659,7 @@ void container_set_floating(struct sway_container *container, bool enable) {
 		return;
 	}
 
-	struct sway_seat *seat = input_manager_current_seat(input_manager);
+	struct sway_seat *seat = input_manager_current_seat();
 	struct sway_workspace *workspace = container->workspace;
 
 	if (enable) {
@@ -662,7 +670,7 @@ void container_set_floating(struct sway_container *container, bool enable) {
 		if (container->view) {
 			view_set_tiled(container->view, false);
 			if (container->view->using_csd) {
-				container->view->border = B_CSD;
+				container->border = B_CSD;
 			}
 		}
 		if (old_parent) {
@@ -676,11 +684,8 @@ void container_set_floating(struct sway_container *container, bool enable) {
 		container_detach(container);
 		struct sway_container *reference =
 			seat_get_focus_inactive_tiling(seat, workspace);
-		if (reference && reference->view) {
-			reference = reference->parent;
-		}
 		if (reference) {
-			container_add_child(reference, container);
+			container_add_sibling(reference, container, 1);
 			container->width = reference->width;
 			container->height = reference->height;
 		} else {
@@ -691,7 +696,7 @@ void container_set_floating(struct sway_container *container, bool enable) {
 		if (container->view) {
 			view_set_tiled(container->view, true);
 			if (container->view->using_csd) {
-				container->view->border = container->view->saved_border;
+				container->border = container->saved_border;
 			}
 		}
 		container->is_sticky = false;
@@ -713,9 +718,9 @@ void container_set_geometry_from_floating_view(struct sway_container *con) {
 	size_t border_width = 0;
 	size_t top = 0;
 
-	if (view->border != B_CSD) {
-		border_width = view->border_thickness * (view->border != B_NONE);
-		top = view->border == B_NORMAL ?
+	if (con->border != B_CSD) {
+		border_width = con->border_thickness * (con->border != B_NONE);
+		top = con->border == B_NORMAL ?
 			container_titlebar_height() : border_width;
 	}
 
@@ -727,8 +732,14 @@ void container_set_geometry_from_floating_view(struct sway_container *con) {
 }
 
 bool container_is_floating(struct sway_container *container) {
-	return !container->parent && container->workspace &&
-		list_find(container->workspace->floating, container) != -1;
+	if (!container->parent && container->workspace &&
+			list_find(container->workspace->floating, container) != -1) {
+		return true;
+	}
+	if (container->scratchpad) {
+		return true;
+	}
+	return false;
 }
 
 void container_get_box(struct sway_container *container, struct wlr_box *box) {
@@ -843,7 +854,7 @@ bool container_has_urgent_child(struct sway_container *container) {
 
 void container_end_mouse_operation(struct sway_container *container) {
 	struct sway_seat *seat;
-	wl_list_for_each(seat, &input_manager->seats, link) {
+	wl_list_for_each(seat, &server.input->seats, link) {
 		if (seat->op_container == container) {
 			seat->op_target_node = NULL; // ensure tiling move doesn't apply
 			seat_end_mouse_operation(seat);
@@ -890,7 +901,7 @@ void container_set_fullscreen(struct sway_container *container, bool enable) {
 
 		struct sway_seat *seat;
 		struct sway_workspace *focus_ws;
-		wl_list_for_each(seat, &input_manager->seats, link) {
+		wl_list_for_each(seat, &server.input->seats, link) {
 			focus_ws = seat_get_focused_workspace(seat);
 			if (focus_ws) {
 				if (focus_ws == workspace) {
@@ -993,9 +1004,7 @@ void container_discover_outputs(struct sway_container *con) {
 	double new_scale = new_output ? new_output->wlr_output->scale : -1;
 	if (old_scale != new_scale) {
 		container_update_title_textures(con);
-		if (con->view) {
-			view_update_marks_textures(con->view);
-		}
+		container_update_marks_textures(con);
 	}
 }
 
@@ -1033,7 +1042,7 @@ void container_add_gaps(struct sway_container *c) {
 		struct sway_view *view = c->view;
 		if (!view) {
 			struct sway_seat *seat =
-				input_manager_get_default_seat(input_manager);
+				input_manager_get_default_seat();
 			struct sway_container *focus =
 				seat_get_focus_inactive_view(seat, &c->node);
 			view = focus ? focus->view : NULL;
@@ -1187,7 +1196,7 @@ void container_replace(struct sway_container *container,
 
 struct sway_container *container_split(struct sway_container *child,
 		enum sway_container_layout layout) {
-	struct sway_seat *seat = input_manager_get_default_seat(input_manager);
+	struct sway_seat *seat = input_manager_get_default_seat();
 	bool set_focus = (seat_get_focus(seat) == &child->node);
 
 	struct sway_container *cont = container_create(NULL);
@@ -1214,4 +1223,143 @@ bool container_is_transient_for(struct sway_container *child,
 	return config->popup_during_fullscreen == POPUP_SMART &&
 		child->view && ancestor->view &&
 		view_is_transient_for(child->view, ancestor->view);
+}
+
+static bool find_by_mark_iterator(struct sway_container *con, void *data) {
+	char *mark = data;
+	return container_has_mark(con, mark);
+}
+
+struct sway_container *container_find_mark(char *mark) {
+	return root_find_container(find_by_mark_iterator, mark);
+}
+
+bool container_find_and_unmark(char *mark) {
+	struct sway_container *con = root_find_container(
+		find_by_mark_iterator, mark);
+	if (!con) {
+		return false;
+	}
+
+	for (int i = 0; i < con->marks->length; ++i) {
+		char *con_mark = con->marks->items[i];
+		if (strcmp(con_mark, mark) == 0) {
+			free(con_mark);
+			list_del(con->marks, i);
+			container_update_marks_textures(con);
+			ipc_event_window(con, "mark");
+			return true;
+		}
+	}
+	return false;
+}
+
+void container_clear_marks(struct sway_container *con) {
+	list_foreach(con->marks, free);
+	con->marks->length = 0;
+	ipc_event_window(con, "mark");
+}
+
+bool container_has_mark(struct sway_container *con, char *mark) {
+	for (int i = 0; i < con->marks->length; ++i) {
+		char *item = con->marks->items[i];
+		if (strcmp(item, mark) == 0) {
+			return true;
+		}
+	}
+	return false;
+}
+
+void container_add_mark(struct sway_container *con, char *mark) {
+	list_add(con->marks, strdup(mark));
+	ipc_event_window(con, "mark");
+}
+
+static void update_marks_texture(struct sway_container *con,
+		struct wlr_texture **texture, struct border_colors *class) {
+	struct sway_output *output = container_get_effective_output(con);
+	if (!output) {
+		return;
+	}
+	if (*texture) {
+		wlr_texture_destroy(*texture);
+		*texture = NULL;
+	}
+	if (!con->marks->length) {
+		return;
+	}
+
+	size_t len = 0;
+	for (int i = 0; i < con->marks->length; ++i) {
+		char *mark = con->marks->items[i];
+		if (mark[0] != '_') {
+			len += strlen(mark) + 2;
+		}
+	}
+	char *buffer = calloc(len + 1, 1);
+	char *part = malloc(len + 1);
+
+	if (!sway_assert(buffer && part, "Unable to allocate memory")) {
+		free(buffer);
+		return;
+	}
+
+	for (int i = 0; i < con->marks->length; ++i) {
+		char *mark = con->marks->items[i];
+		if (mark[0] != '_') {
+			sprintf(part, "[%s]", mark);
+			strcat(buffer, part);
+		}
+	}
+	free(part);
+
+	double scale = output->wlr_output->scale;
+	int width = 0;
+	int height = con->title_height * scale;
+
+	cairo_t *c = cairo_create(NULL);
+	get_text_size(c, config->font, &width, NULL, NULL, scale, false,
+			"%s", buffer);
+	cairo_destroy(c);
+
+	cairo_surface_t *surface = cairo_image_surface_create(
+			CAIRO_FORMAT_ARGB32, width, height);
+	cairo_t *cairo = cairo_create(surface);
+	cairo_set_source_rgba(cairo, class->background[0], class->background[1],
+			class->background[2], class->background[3]);
+	cairo_paint(cairo);
+	PangoContext *pango = pango_cairo_create_context(cairo);
+	cairo_set_antialias(cairo, CAIRO_ANTIALIAS_BEST);
+	cairo_set_source_rgba(cairo, class->text[0], class->text[1],
+			class->text[2], class->text[3]);
+	cairo_move_to(cairo, 0, 0);
+
+	pango_printf(cairo, config->font, scale, false, "%s", buffer);
+
+	cairo_surface_flush(surface);
+	unsigned char *data = cairo_image_surface_get_data(surface);
+	int stride = cairo_format_stride_for_width(CAIRO_FORMAT_ARGB32, width);
+	struct wlr_renderer *renderer = wlr_backend_get_renderer(
+			output->wlr_output->backend);
+	*texture = wlr_texture_from_pixels(
+			renderer, WL_SHM_FORMAT_ARGB8888, stride, width, height, data);
+	cairo_surface_destroy(surface);
+	g_object_unref(pango);
+	cairo_destroy(cairo);
+	free(buffer);
+}
+
+void container_update_marks_textures(struct sway_container *con) {
+	if (!config->show_marks) {
+		return;
+	}
+	update_marks_texture(con, &con->marks_focused,
+			&config->border_colors.focused);
+	update_marks_texture(con, &con->marks_focused_inactive,
+			&config->border_colors.focused_inactive);
+	update_marks_texture(con, &con->marks_unfocused,
+			&config->border_colors.unfocused);
+	update_marks_texture(con, &con->marks_urgent,
+			&config->border_colors.urgent);
+	container_damage_whole(con);
 }

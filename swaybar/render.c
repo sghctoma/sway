@@ -448,7 +448,9 @@ static uint32_t render_to_cairo(cairo_t *cairo, struct swaybar_output *output) {
 	}
 	cairo_paint(cairo);
 
-	uint32_t max_height = 0;
+	int th;
+	get_text_size(cairo, config->font, NULL, &th, NULL, output->scale, false, "");
+	uint32_t max_height = (th + WS_VERTICAL_PADDING * 4) / output->scale;
 	/*
 	 * Each render_* function takes the actual height of the bar, and returns
 	 * the ideal height. If the actual height is too short, the render function
@@ -464,7 +466,7 @@ static uint32_t render_to_cairo(cairo_t *cairo, struct swaybar_output *output) {
 	x = 0;
 	if (config->workspace_buttons) {
 		struct swaybar_workspace *ws;
-		wl_list_for_each_reverse(ws, &output->workspaces, link) {
+		wl_list_for_each(ws, &output->workspaces, link) {
 			uint32_t h = render_workspace_button(cairo, output, ws, &x);
 			max_height = h > max_height ? h : max_height;
 		}

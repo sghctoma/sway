@@ -151,8 +151,7 @@ static void destroy_removed_seats(struct sway_config *old_config,
 		/* Also destroy seats that aren't present in new config */
 		if (new_config && list_seq_find(new_config->seat_configs,
 				seat_name_cmp, seat_config->name) < 0) {
-			seat = input_manager_get_seat(input_manager,
-				seat_config->name);
+			seat = input_manager_get_seat(seat_config->name);
 			seat_destroy(seat);
 		}
 	}
@@ -221,8 +220,7 @@ static void config_defaults(struct sway_config *config) {
 	config->floating_minimum_height = 50;
 
 	// Flags
-	config->focus_follows_mouse = true;
-	config->raise_floating = true;
+	config->focus_follows_mouse = FOLLOWS_YES;
 	config->mouse_warping = WARP_OUTPUT;
 	config->focus_wrapping = WRAP_YES;
 	config->validating = false;
@@ -391,7 +389,8 @@ bool load_main_config(const char *file, bool is_active, bool validating) {
 	config_defaults(config);
 	config->validating = validating;
 	if (is_active) {
-		wlr_log(WLR_DEBUG, "Performing configuration file reload");
+		wlr_log(WLR_DEBUG, "Performing configuration file %s",
+			validating ? "validation" : "reload");
 		config->reloading = true;
 		config->active = true;
 
@@ -586,13 +585,11 @@ static int detect_brace_on_following_line(FILE *file, char *line,
 		char *peeked = NULL;
 		long position = 0;
 		do {
-			wlr_log(WLR_DEBUG, "Peeking line %d", line_number + lines + 1);
 			free(peeked);
 			peeked = peek_line(file, lines, &position);
 			if (peeked) {
 				peeked = strip_whitespace(peeked);
 			}
-			wlr_log(WLR_DEBUG, "Peeked line: `%s`", peeked);
 			lines++;
 		} while (peeked && strlen(peeked) == 0);
 
@@ -697,7 +694,6 @@ bool read_config(FILE *file, struct sway_config *config,
 			free(line);
 			return false;
 		}
-		wlr_log(WLR_DEBUG, "Expanded line: %s", expanded);
 		struct cmd_results *res;
 		if (block && strcmp(block, "<commands>") == 0) {
 			// Special case

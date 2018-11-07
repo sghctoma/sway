@@ -117,7 +117,7 @@ endif
 # If prefix is '/usr', sysconfdir will be explicitly set to '/etc' by Meson to
 # enforce FHS compliance, so we should look for configs there as well.
 if prefix == '/usr'
-	add_project_arguments('-DSYSCONFDIR="/etc"', language : 'c')
+	add_project_arguments('-DSYSCONFDIR="/@0@"'.format(sysconfdir), language : 'c')
 else
 	add_project_arguments('-DSYSCONFDIR="/@0@/@1@"'.format(prefix, sysconfdir), language : 'c')
 endif
@@ -169,7 +169,7 @@ config.set('prefix', prefix)
 # If prefix is '/usr', sysconfdir will be explicitly set to '/etc' by Meson to
 # enforce FHS compliance, so we should look for configs there as well.
 if prefix == '/usr'
-	config.set('sysconfdir', '/etc')
+	config.set('sysconfdir', sysconfdir)
 else
 	config.set('sysconfdir', join_paths(prefix, sysconfdir))
 endif
@@ -244,8 +244,10 @@ endif
 if (get_option('fish-completions'))
 	fish_files = files(
 		'completions/fish/sway.fish',
+		'completions/fish/swayidle.fish',
 		'completions/fish/swaylock.fish',
 		'completions/fish/swaymsg.fish',
+		'completions/fish/swaynag.fish',
 	)
 	fish_install_dir = datadir + '/fish/completions'
 

@@ -35,7 +35,6 @@ void view_init(struct sway_view *view, enum sway_view_type type,
 	view->type = type;
 	view->impl = impl;
 	view->executed_criteria = create_list();
-	view->marks = create_list();
 	view->allow_request_urgent = true;
 	wl_signal_init(&view->events.unmap);
 }
@@ -55,13 +54,6 @@ void view_destroy(struct sway_view *view) {
 	}
 	list_free(view->executed_criteria);
 
-	list_foreach(view->marks, free);
-	list_free(view->marks);
-
-	wlr_texture_destroy(view->marks_focused);
-	wlr_texture_destroy(view->marks_focused_inactive);
-	wlr_texture_destroy(view->marks_unfocused);
-	wlr_texture_destroy(view->marks_urgent);
 	free(view->title_format);
 
 	if (view->impl->destroy) {
@@ -113,6 +105,13 @@ const char *view_get_instance(struct sway_view *view) {
 uint32_t view_get_x11_window_id(struct sway_view *view) {
 	if (view->impl->get_int_prop) {
 		return view->impl->get_int_prop(view, VIEW_PROP_X11_WINDOW_ID);
+	}
+	return 0;
+}
+
+uint32_t view_get_x11_parent_id(struct sway_view *view) {
+	if (view->impl->get_int_prop) {
+		return view->impl->get_int_prop(view, VIEW_PROP_X11_PARENT_ID);
 	}
 	return 0;
 }
@@ -218,21 +217,21 @@ void view_autoconfigure(struct sway_view *view) {
 	bool no_gaps = config->hide_edge_borders != E_SMART_NO_GAPS
 		|| !gaps_to_edge(view);
 
-	view->border_top = view->border_bottom = true;
-	view->border_left = view->border_right = true;
+	con->border_top = con->border_bottom = true;
+	con->border_left = con->border_right = true;
 	if (config->hide_edge_borders == E_BOTH
 			|| config->hide_edge_borders == E_VERTICAL
 			|| (smart && !other_views && no_gaps)) {
-		view->border_left = con->x - con->current_gaps != ws->x;
+		con->border_left = con->x - con->current_gaps != ws->x;
 		int right_x = con->x + con->width + con->current_gaps;
-		view->border_right = right_x != ws->x + ws->width;
+		con->border_right = right_x != ws->x + ws->width;
 	}
 	if (config->hide_edge_borders == E_BOTH
 			|| config->hide_edge_borders == E_HORIZONTAL
 			|| (smart && !other_views && no_gaps)) {
-		view->border_top = con->y - con->current_gaps != ws->y;
+		con->border_top = con->y - con->current_gaps != ws->y;
 		int bottom_y = con->y + con->height + con->current_gaps;
-		view->border_bottom = bottom_y != ws->y + ws->height;
+		con->border_bottom = bottom_y != ws->y + ws->height;
 	}
 
 	double x, y, width, height;
@@ -245,14 +244,14 @@ void view_autoconfigure(struct sway_view *view) {
 	enum sway_container_layout layout = container_parent_layout(con);
 	if (layout == L_TABBED && !container_is_floating(con)) {
 		y_offset = container_titlebar_height();
-		view->border_top = false;
+		con->border_top = false;
 	} else if (layout == L_STACKED && !container_is_floating(con)) {
 		list_t *siblings = container_get_siblings(con);
 		y_offset = container_titlebar_height() * siblings->length;
-		view->border_top = false;
+		con->border_top = false;
 	}
 
-	switch (view->border) {
+	switch (con->border) {
 	case B_CSD:
 	case B_NONE:
 		x = con->x;
@@ -261,29 +260,29 @@ void view_autoconfigure(struct sway_view *view) {
 		height = con->height - y_offset;
 		break;
 	case B_PIXEL:
-		x = con->x + view->border_thickness * view->border_left;
-		y = con->y + view->border_thickness * view->border_top + y_offset;
+		x = con->x + con->border_thickness * con->border_left;
+		y = con->y + con->border_thickness * con->border_top + y_offset;
 		width = con->width
-			- view->border_thickness * view->border_left
-			- view->border_thickness * view->border_right;
+			- con->border_thickness * con->border_left
+			- con->border_thickness * con->border_right;
 		height = con->height - y_offset
-			- view->border_thickness * view->border_top
-			- view->border_thickness * view->border_bottom;
+			- con->border_thickness * con->border_top
+			- con->border_thickness * con->border_bottom;
 		break;
 	case B_NORMAL:
 		// Height is: 1px border + 3px pad + title height + 3px pad + 1px border
-		x = con->x + view->border_thickness * view->border_left;
+		x = con->x + con->border_thickness * con->border_left;
 		width = con->width
-			- view->border_thickness * view->border_left
-			- view->border_thickness * view->border_right;
+			- con->border_thickness * con->border_left
+			- con->border_thickness * con->border_right;
 		if (y_offset) {
 			y = con->y + y_offset;
 			height = con->height - y_offset
-				- view->border_thickness * view->border_bottom;
+				- con->border_thickness * con->border_bottom;
 		} else {
 			y = con->y + container_titlebar_height();
 			height = con->height - container_titlebar_height()
-				- view->border_thickness * view->border_bottom;
+				- con->border_thickness * con->border_bottom;
 		}
 		break;
 	}
@@ -305,7 +304,7 @@ void view_request_activate(struct sway_view *view) {
 	if (!ws) { // hidden scratchpad container
 		return;
 	}
-	struct sway_seat *seat = input_manager_current_seat(input_manager);
+	struct sway_seat *seat = input_manager_current_seat();
 
 	switch (config->focus_on_window_activation) {
 	case FOWA_SMART:
@@ -340,13 +339,14 @@ void view_set_csd_from_server(struct sway_view *view, bool enabled) {
 
 void view_update_csd_from_client(struct sway_view *view, bool enabled) {
 	wlr_log(WLR_DEBUG, "View %p updated CSD to %i", view, enabled);
-	if (enabled && view->border != B_CSD) {
-		view->saved_border = view->border;
-		if (view->container && container_is_floating(view->container)) {
-			view->border = B_CSD;
+	struct sway_container *con = view->container;
+	if (enabled && con && con->border != B_CSD) {
+		con->saved_border = con->border;
+		if (container_is_floating(con)) {
+			con->border = B_CSD;
 		}
-	} else if (!enabled && view->border == B_CSD) {
-		view->border = view->saved_border;
+	} else if (!enabled && con && con->border == B_CSD) {
+		con->border = con->saved_border;
 	}
 	view->using_csd = enabled;
 }
@@ -443,7 +443,7 @@ void view_execute_criteria(struct sway_view *view) {
 }
 
 static struct sway_workspace *select_workspace(struct sway_view *view) {
-	struct sway_seat *seat = input_manager_current_seat(input_manager);
+	struct sway_seat *seat = input_manager_current_seat();
 
 	// Check if there's any `assign` criteria for the view
 	list_t *criterias = criteria_for_view(view,
@@ -465,8 +465,8 @@ static struct sway_workspace *select_workspace(struct sway_view *view) {
 
 			if (!ws) {
 				if (strcasecmp(criteria->target, "back_and_forth") == 0) {
-					if (prev_workspace_name) {
-						ws = workspace_create(NULL, prev_workspace_name);
+					if (seat->prev_workspace_name) {
+						ws = workspace_create(NULL, seat->prev_workspace_name);
 					}
 				} else {
 					ws = workspace_create(NULL, criteria->target);
@@ -517,7 +517,7 @@ static struct sway_workspace *select_workspace(struct sway_view *view) {
 }
 
 static bool should_focus(struct sway_view *view) {
-	struct sway_seat *seat = input_manager_current_seat(input_manager);
+	struct sway_seat *seat = input_manager_current_seat();
 	struct sway_container *prev_con = seat_get_focused_container(seat);
 	struct sway_workspace *prev_ws = seat_get_focused_workspace(seat);
 	struct sway_workspace *map_ws = view->container->workspace;
@@ -544,13 +544,14 @@ static bool should_focus(struct sway_view *view) {
 	return len == 0;
 }
 
-void view_map(struct sway_view *view, struct wlr_surface *wlr_surface) {
+void view_map(struct sway_view *view, struct wlr_surface *wlr_surface,
+			  bool fullscreen, bool decoration) {
 	if (!sway_assert(view->surface == NULL, "cannot map mapped view")) {
 		return;
 	}
 	view->surface = wlr_surface;
 
-	struct sway_seat *seat = input_manager_current_seat(input_manager);
+	struct sway_seat *seat = input_manager_current_seat();
 	struct sway_workspace *ws = select_workspace(view);
 	struct sway_node *node = seat_get_focus_inactive(seat, &ws->node);
 	struct sway_container *target_sibling = node->type == N_CONTAINER ?
@@ -576,12 +577,12 @@ void view_map(struct sway_view *view, struct wlr_surface *wlr_surface) {
 	view->surface_new_subsurface.notify = view_handle_surface_new_subsurface;
 
 	if (view->impl->wants_floating && view->impl->wants_floating(view)) {
-		view->border = config->floating_border;
-		view->border_thickness = config->floating_border_thickness;
+		view->container->border = config->floating_border;
+		view->container->border_thickness = config->floating_border_thickness;
 		container_set_floating(view->container, true);
 	} else {
-		view->border = config->border;
-		view->border_thickness = config->border_thickness;
+		view->container->border = config->border;
+		view->container->border_thickness = config->border_thickness;
 		view_set_tiled(view, true);
 	}
 
@@ -595,13 +596,28 @@ void view_map(struct sway_view *view, struct wlr_surface *wlr_surface) {
 		}
 	}
 
-	if (should_focus(view)) {
-		input_manager_set_focus(input_manager, &view->container->node);
-	}
-
 	view_update_title(view, false);
 	container_update_representation(view->container);
 	view_execute_criteria(view);
+
+	if (decoration) {
+		view_update_csd_from_client(view, decoration);
+	}
+
+	if (fullscreen) {
+		container_set_fullscreen(view->container, true);
+		arrange_workspace(view->container->workspace);
+	} else {
+		if (view->container->parent) {
+			arrange_container(view->container->parent);
+		} else if (view->container->workspace) {
+			arrange_workspace(view->container->workspace);
+		}
+	}
+
+	if (should_focus(view)) {
+		input_manager_set_focus(&view->container->node);
+	}
 }
 
 void view_unmap(struct sway_view *view) {
@@ -629,8 +645,15 @@ void view_unmap(struct sway_view *view) {
 	}
 
 	struct sway_seat *seat;
-	wl_list_for_each(seat, &input_manager->seats, link) {
-		cursor_send_pointer_motion(seat->cursor, 0, true);
+	wl_list_for_each(seat, &server.input->seats, link) {
+		if (config->mouse_warping == WARP_CONTAINER) {
+			struct sway_node *node = seat_get_focus(seat);
+			if (node && node->type == N_CONTAINER) {
+				cursor_warp_to_container(seat->cursor, node->sway_container);
+			} else if (node && node->type == N_WORKSPACE) {
+				cursor_warp_to_workspace(seat->cursor, node->sway_workspace);
+			}
+		}
 	}
 
 	transaction_commit_dirty();
@@ -707,13 +730,6 @@ static void view_child_handle_surface_destroy(struct wl_listener *listener,
 	view_child_destroy(child);
 }
 
-static void view_child_handle_view_unmap(struct wl_listener *listener,
-		void *data) {
-	struct sway_view_child *child =
-		wl_container_of(listener, child, view_unmap);
-	view_child_destroy(child);
-}
-
 static void view_init_subsurfaces(struct sway_view *view,
 		struct wlr_surface *surface) {
 	struct wlr_subsurface *subsurface;
@@ -755,9 +771,6 @@ void view_child_init(struct sway_view_child *child,
 	child->surface_map.notify = view_child_handle_surface_map;
 	child->surface_unmap.notify = view_child_handle_surface_unmap;
 
-	wl_signal_add(&view->events.unmap, &child->view_unmap);
-	child->view_unmap.notify = view_child_handle_view_unmap;
-
 	struct sway_output *output = child->view->container->workspace->output;
 	wlr_surface_send_enter(child->surface, output->wlr_output);
 
@@ -767,7 +780,6 @@ void view_child_init(struct sway_view_child *child,
 void view_child_destroy(struct sway_view_child *child) {
 	wl_list_remove(&child->surface_commit.link);
 	wl_list_remove(&child->surface_destroy.link);
-	wl_list_remove(&child->view_unmap.link);
 
 	if (child->impl && child->impl->destroy) {
 		child->impl->destroy(child);
@@ -917,153 +929,6 @@ void view_update_title(struct sway_view *view, bool force) {
 	ipc_event_window(view->container, "title");
 }
 
-static bool find_by_mark_iterator(struct sway_container *con,
-		void *data) {
-	char *mark = data;
-	return con->view && view_has_mark(con->view, mark);
-}
-
-struct sway_view *view_find_mark(char *mark) {
-	struct sway_container *container = root_find_container(
-			find_by_mark_iterator, mark);
-	if (!container) {
-		return NULL;
-	}
-	return container->view;
-}
-
-bool view_find_and_unmark(char *mark) {
-	struct sway_container *container = root_find_container(
-		find_by_mark_iterator, mark);
-	if (!container) {
-		return false;
-	}
-	struct sway_view *view = container->view;
-
-	for (int i = 0; i < view->marks->length; ++i) {
-		char *view_mark = view->marks->items[i];
-		if (strcmp(view_mark, mark) == 0) {
-			free(view_mark);
-			list_del(view->marks, i);
-			view_update_marks_textures(view);
-			ipc_event_window(container, "mark");
-			return true;
-		}
-	}
-	return false;
-}
-
-void view_clear_marks(struct sway_view *view) {
-	list_foreach(view->marks, free);
-	view->marks->length = 0;
-	ipc_event_window(view->container, "mark");
-}
-
-bool view_has_mark(struct sway_view *view, char *mark) {
-	for (int i = 0; i < view->marks->length; ++i) {
-		char *item = view->marks->items[i];
-		if (strcmp(item, mark) == 0) {
-			return true;
-		}
-	}
-	return false;
-}
-
-void view_add_mark(struct sway_view *view, char *mark) {
-	list_add(view->marks, strdup(mark));
-	ipc_event_window(view->container, "mark");
-}
-
-static void update_marks_texture(struct sway_view *view,
-		struct wlr_texture **texture, struct border_colors *class) {
-	struct sway_output *output =
-		container_get_effective_output(view->container);
-	if (!output) {
-		return;
-	}
-	if (*texture) {
-		wlr_texture_destroy(*texture);
-		*texture = NULL;
-	}
-	if (!view->marks->length) {
-		return;
-	}
-
-	size_t len = 0;
-	for (int i = 0; i < view->marks->length; ++i) {
-		char *mark = view->marks->items[i];
-		if (mark[0] != '_') {
-			len += strlen(mark) + 2;
-		}
-	}
-	char *buffer = calloc(len + 1, 1);
-	char *part = malloc(len + 1);
-
-	if (!sway_assert(buffer && part, "Unable to allocate memory")) {
-		free(buffer);
-		return;
-	}
-
-	for (int i = 0; i < view->marks->length; ++i) {
-		char *mark = view->marks->items[i];
-		if (mark[0] != '_') {
-			sprintf(part, "[%s]", mark);
-			strcat(buffer, part);
-		}
-	}
-	free(part);
-
-	double scale = output->wlr_output->scale;
-	int width = 0;
-	int height = view->container->title_height * scale;
-
-	cairo_t *c = cairo_create(NULL);
-	get_text_size(c, config->font, &width, NULL, NULL, scale, false,
-			"%s", buffer);
-	cairo_destroy(c);
-
-	cairo_surface_t *surface = cairo_image_surface_create(
-			CAIRO_FORMAT_ARGB32, width, height);
-	cairo_t *cairo = cairo_create(surface);
-	cairo_set_source_rgba(cairo, class->background[0], class->background[1],
-			class->background[2], class->background[3]);
-	cairo_paint(cairo);
-	PangoContext *pango = pango_cairo_create_context(cairo);
-	cairo_set_antialias(cairo, CAIRO_ANTIALIAS_BEST);
-	cairo_set_source_rgba(cairo, class->text[0], class->text[1],
-			class->text[2], class->text[3]);
-	cairo_move_to(cairo, 0, 0);
-
-	pango_printf(cairo, config->font, scale, false, "%s", buffer);
-
-	cairo_surface_flush(surface);
-	unsigned char *data = cairo_image_surface_get_data(surface);
-	int stride = cairo_format_stride_for_width(CAIRO_FORMAT_ARGB32, width);
-	struct wlr_renderer *renderer = wlr_backend_get_renderer(
-			output->wlr_output->backend);
-	*texture = wlr_texture_from_pixels(
-			renderer, WL_SHM_FORMAT_ARGB8888, stride, width, height, data);
-	cairo_surface_destroy(surface);
-	g_object_unref(pango);
-	cairo_destroy(cairo);
-	free(buffer);
-}
-
-void view_update_marks_textures(struct sway_view *view) {
-	if (!config->show_marks) {
-		return;
-	}
-	update_marks_texture(view, &view->marks_focused,
-			&config->border_colors.focused);
-	update_marks_texture(view, &view->marks_focused_inactive,
-			&config->border_colors.focused_inactive);
-	update_marks_texture(view, &view->marks_unfocused,
-			&config->border_colors.unfocused);
-	update_marks_texture(view, &view->marks_urgent,
-			&config->border_colors.urgent);
-	container_damage_whole(view->container);
-}
-
 bool view_is_visible(struct sway_view *view) {
 	if (view->container->node.destroying) {
 		return false;
@@ -1082,7 +947,7 @@ bool view_is_visible(struct sway_view *view) {
 		return false;
 	}
 	// Check view isn't in a tabbed or stacked container on an inactive tab
-	struct sway_seat *seat = input_manager_current_seat(input_manager);
+	struct sway_seat *seat = input_manager_current_seat();
 	struct sway_container *con = view->container;
 	while (con) {
 		enum sway_container_layout layout = container_parent_layout(con);
@@ -1114,7 +979,7 @@ void view_set_urgent(struct sway_view *view, bool enable) {
 		return;
 	}
 	if (enable) {
-		struct sway_seat *seat = input_manager_current_seat(input_manager);
+		struct sway_seat *seat = input_manager_current_seat();
 		if (seat_get_focused_container(seat) == view->container) {
 			return;
 		}

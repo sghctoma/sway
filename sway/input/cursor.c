@@ -9,6 +9,7 @@
 #include <wlr/types/wlr_cursor.h>
 #include <wlr/types/wlr_xcursor_manager.h>
 #include <wlr/types/wlr_idle.h>
+#include <wlr/types/wlr_box.h>
 #include "list.h"
 #include "log.h"
 #include "config.h"
@@ -186,23 +187,22 @@ static enum wlr_edges find_edge(struct sway_container *cont,
 	if (!cont->view) {
 		return WLR_EDGE_NONE;
 	}
-	struct sway_view *view = cont->view;
-	if (view->border == B_NONE || !view->border_thickness ||
-			view->border == B_CSD) {
+	if (cont->border == B_NONE || !cont->border_thickness ||
+			cont->border == B_CSD) {
 		return WLR_EDGE_NONE;
 	}
 
 	enum wlr_edges edge = 0;
-	if (cursor->cursor->x < cont->x + view->border_thickness) {
+	if (cursor->cursor->x < cont->x + cont->border_thickness) {
 		edge |= WLR_EDGE_LEFT;
 	}
-	if (cursor->cursor->y < cont->y + view->border_thickness) {
+	if (cursor->cursor->y < cont->y + cont->border_thickness) {
 		edge |= WLR_EDGE_TOP;
 	}
-	if (cursor->cursor->x >= cont->x + cont->width - view->border_thickness) {
+	if (cursor->cursor->x >= cont->x + cont->width - cont->border_thickness) {
 		edge |= WLR_EDGE_RIGHT;
 	}
-	if (cursor->cursor->y >= cont->y + cont->height - view->border_thickness) {
+	if (cursor->cursor->y >= cont->y + cont->height - cont->border_thickness) {
 		edge |= WLR_EDGE_BOTTOM;
 	}
 
@@ -542,8 +542,57 @@ static void handle_resize_tiling_motion(struct sway_seat *seat,
 	}
 }
 
-void cursor_send_pointer_motion(struct sway_cursor *cursor, uint32_t time_msec,
-		bool allow_refocusing) {
+static void cursor_do_rebase(struct sway_cursor *cursor, uint32_t time_msec,
+		struct sway_node *node, struct wlr_surface *surface,
+		double sx, double sy) {
+	// Handle cursor image
+	if (surface) {
+		// Reset cursor if switching between clients
+		struct wl_client *client = wl_resource_get_client(surface->resource);
+		if (client != cursor->image_client) {
+			cursor_set_image(cursor, "left_ptr", client);
+		}
+	} else if (node && node->type == N_CONTAINER) {
+		// Try a node's resize edge
+		enum wlr_edges edge = find_resize_edge(node->sway_container, cursor);
+		if (edge == WLR_EDGE_NONE) {
+			cursor_set_image(cursor, "left_ptr", NULL);
+		} else if (container_is_floating(node->sway_container)) {
+			cursor_set_image(cursor, wlr_xcursor_get_resize_name(edge), NULL);
+		} else {
+			if (edge & (WLR_EDGE_LEFT | WLR_EDGE_RIGHT)) {
+				cursor_set_image(cursor, "col-resize", NULL);
+			} else {
+				cursor_set_image(cursor, "row-resize", NULL);
+			}
+		}
+	} else {
+		cursor_set_image(cursor, "left_ptr", NULL);
+	}
+
+	// Send pointer enter/leave
+	struct wlr_seat *wlr_seat = cursor->seat->wlr_seat;
+	if (surface) {
+		if (seat_is_input_allowed(cursor->seat, surface)) {
+			wlr_seat_pointer_notify_enter(wlr_seat, surface, sx, sy);
+			wlr_seat_pointer_notify_motion(wlr_seat, time_msec, sx, sy);
+		}
+	} else {
+		wlr_seat_pointer_clear_focus(wlr_seat);
+	}
+}
+
+void cursor_rebase(struct sway_cursor *cursor) {
+	uint32_t time_msec = get_current_time_msec();
+	struct wlr_surface *surface = NULL;
+	double sx, sy;
+	cursor->previous.node = node_at_coords(cursor->seat,
+			cursor->cursor->x, cursor->cursor->y, &surface, &sx, &sy);
+	cursor_do_rebase(cursor, time_msec, cursor->previous.node, surface, sx, sy);
+}
+
+void cursor_send_pointer_motion(struct sway_cursor *cursor,
+		uint32_t time_msec) {
 	if (time_msec == 0) {
 		time_msec = get_current_time_msec();
 	}
@@ -588,7 +637,8 @@ void cursor_send_pointer_motion(struct sway_cursor *cursor, uint32_t time_msec,
 	cursor->previous.y = cursor->cursor->y;
 	cursor->previous.node = node;
 
-	if (node && config->focus_follows_mouse && allow_refocusing) {
+	if (node && (config->focus_follows_mouse == FOLLOWS_YES ||
+			config->focus_follows_mouse == FOLLOWS_ALWAYS)) {
 		struct sway_node *focus = seat_get_focus(seat);
 		if (focus && node->type == N_WORKSPACE) {
 			// Only follow the mouse if it would move to a new output
@@ -596,63 +646,31 @@ void cursor_send_pointer_motion(struct sway_cursor *cursor, uint32_t time_msec,
 			struct sway_output *focused_output = node_get_output(focus);
 			struct sway_output *output = node_get_output(node);
 			if (output != focused_output) {
-				seat_set_focus_warp(seat, node, false);
+				seat_set_focus(seat, node);
 			}
 		} else if (node->type == N_CONTAINER && node->sway_container->view) {
 			// Focus node if the following are true:
 			// - cursor is over a new view, i.e. entered a new window; and
 			// - the new view is visible, i.e. not hidden in a stack or tab; and
 			// - the seat does not have a keyboard grab
-			if (!wlr_seat_keyboard_has_grab(cursor->seat->wlr_seat) &&
+			if ((!wlr_seat_keyboard_has_grab(cursor->seat->wlr_seat) &&
 					node != prev_node &&
-					view_is_visible(node->sway_container->view)) {
-				seat_set_focus_warp(seat, node, false);
+					view_is_visible(node->sway_container->view)) ||
+					config->focus_follows_mouse == FOLLOWS_ALWAYS) {
+				seat_set_focus(seat, node);
 			} else {
 				struct sway_node *next_focus =
 					seat_get_focus_inactive(seat, &root->node);
 				if (next_focus && next_focus->type == N_CONTAINER &&
 						next_focus->sway_container->view &&
 						view_is_visible(next_focus->sway_container->view)) {
-					seat_set_focus_warp(seat, next_focus, false);
+					seat_set_focus(seat, next_focus);
 				}
 			}
 		}
 	}
 
-	// Handle cursor image
-	if (surface) {
-		// Reset cursor if switching between clients
-		struct wl_client *client = wl_resource_get_client(surface->resource);
-		if (client != cursor->image_client) {
-			cursor_set_image(cursor, "left_ptr", client);
-		}
-	} else if (node && node->type == N_CONTAINER) {
-		// Try a node's resize edge
-		enum wlr_edges edge = find_resize_edge(node->sway_container, cursor);
-		if (edge == WLR_EDGE_NONE) {
-			cursor_set_image(cursor, "left_ptr", NULL);
-		} else if (container_is_floating(node->sway_container)) {
-			cursor_set_image(cursor, wlr_xcursor_get_resize_name(edge), NULL);
-		} else {
-			if (edge & (WLR_EDGE_LEFT | WLR_EDGE_RIGHT)) {
-				cursor_set_image(cursor, "col-resize", NULL);
-			} else {
-				cursor_set_image(cursor, "row-resize", NULL);
-			}
-		}
-	} else {
-		cursor_set_image(cursor, "left_ptr", NULL);
-	}
-
-	// send pointer enter/leave
-	if (surface != NULL) {
-		if (seat_is_input_allowed(seat, surface)) {
-			wlr_seat_pointer_notify_enter(wlr_seat, surface, sx, sy);
-			wlr_seat_pointer_notify_motion(wlr_seat, time_msec, sx, sy);
-		}
-	} else {
-		wlr_seat_pointer_clear_focus(wlr_seat);
-	}
+	cursor_do_rebase(cursor, time_msec, node, surface, sx, sy);
 
 	struct wlr_drag_icon *wlr_drag_icon;
 	wl_list_for_each(wlr_drag_icon, &wlr_seat->drag_icons, link) {
@@ -663,11 +681,11 @@ void cursor_send_pointer_motion(struct sway_cursor *cursor, uint32_t time_msec,
 
 static void handle_cursor_motion(struct wl_listener *listener, void *data) {
 	struct sway_cursor *cursor = wl_container_of(listener, cursor, motion);
-	wlr_idle_notify_activity(cursor->seat->input->server->idle, cursor->seat->wlr_seat);
+	wlr_idle_notify_activity(server.idle, cursor->seat->wlr_seat);
 	struct wlr_event_pointer_motion *event = data;
 	wlr_cursor_move(cursor->cursor, event->device,
 		event->delta_x, event->delta_y);
-	cursor_send_pointer_motion(cursor, event->time_msec, true);
+	cursor_send_pointer_motion(cursor, event->time_msec);
 	transaction_commit_dirty();
 }
 
@@ -675,10 +693,10 @@ static void handle_cursor_motion_absolute(
 		struct wl_listener *listener, void *data) {
 	struct sway_cursor *cursor =
 		wl_container_of(listener, cursor, motion_absolute);
-	wlr_idle_notify_activity(cursor->seat->input->server->idle, cursor->seat->wlr_seat);
+	wlr_idle_notify_activity(server.idle, cursor->seat->wlr_seat);
 	struct wlr_event_pointer_motion_absolute *event = data;
 	wlr_cursor_warp_absolute(cursor->cursor, event->device, event->x, event->y);
-	cursor_send_pointer_motion(cursor, event->time_msec, true);
+	cursor_send_pointer_motion(cursor, event->time_msec);
 	transaction_commit_dirty();
 }
 
@@ -726,19 +744,23 @@ static void state_add_button(struct sway_cursor *cursor, uint32_t button) {
  * Return the mouse binding which matches modifier, click location, release,
  * and pressed button state, otherwise return null.
  */
-static struct sway_binding* get_active_mouse_binding(const struct sway_cursor *cursor,
-		list_t *bindings, uint32_t modifiers, bool release, bool on_titlebar,
-				     bool on_border, bool on_content) {
+static struct sway_binding* get_active_mouse_binding(
+		const struct sway_cursor *cursor, list_t *bindings, uint32_t modifiers,
+		bool release, bool on_titlebar, bool on_border, bool on_content,
+		const char *identifier) {
 	uint32_t click_region = (on_titlebar ? BINDING_TITLEBAR : 0) |
 			(on_border ? BINDING_BORDER : 0) |
 			(on_content ? BINDING_CONTENTS : 0);
 
+	struct sway_binding *current = NULL;
 	for (int i = 0; i < bindings->length; ++i) {
 		struct sway_binding *binding = bindings->items[i];
 		if (modifiers ^ binding->modifiers ||
 				cursor->pressed_button_count != (size_t)binding->keys->length ||
 				release != (binding->flags & BINDING_RELEASE) ||
-				!(click_region & binding->flags)) {
+				!(click_region & binding->flags) ||
+				(strcmp(binding->input, identifier) != 0 &&
+				 strcmp(binding->input, "*") != 0)) {
 			continue;
 		}
 
@@ -754,13 +776,20 @@ static struct sway_binding* get_active_mouse_binding(const struct sway_cursor *c
 			continue;
 		}
 
-		return binding;
+		if (!current || strcmp(current->input, "*") == 0) {
+			current = binding;
+			if (strcmp(current->input, identifier) == 0) {
+				// If a binding is found for the exact input, quit searching
+				break;
+			}
+		}
 	}
-	return NULL;
+	return current;
 }
 
 void dispatch_cursor_button(struct sway_cursor *cursor,
-		uint32_t time_msec, uint32_t button, enum wlr_button_state state) {
+		struct wlr_input_device *device, uint32_t time_msec, uint32_t button,
+		enum wlr_button_state state) {
 	if (time_msec == 0) {
 		time_msec = get_current_time_msec();
 	}
@@ -796,18 +825,21 @@ void dispatch_cursor_button(struct sway_cursor *cursor,
 	struct wlr_keyboard *keyboard = wlr_seat_get_keyboard(seat->wlr_seat);
 	uint32_t modifiers = keyboard ? wlr_keyboard_get_modifiers(keyboard) : 0;
 
+	char *device_identifier = device ? input_device_get_identifier(device)
+		: strdup("*");
 	struct sway_binding *binding = NULL;
 	if (state == WLR_BUTTON_PRESSED) {
 		state_add_button(cursor, button);
 		binding = get_active_mouse_binding(cursor,
 			config->current_mode->mouse_bindings, modifiers, false,
-			on_titlebar, on_border, on_contents);
+			on_titlebar, on_border, on_contents, device_identifier);
 	} else {
 		binding = get_active_mouse_binding(cursor,
 			config->current_mode->mouse_bindings, modifiers, true,
-			on_titlebar, on_border, on_contents);
+			on_titlebar, on_border, on_contents, device_identifier);
 		state_erase_button(cursor, button);
 	}
+	free(device_identifier);
 	if (binding) {
 		seat_execute_command(seat, binding);
 		return;
@@ -939,9 +971,9 @@ void dispatch_cursor_button(struct sway_cursor *cursor,
 
 static void handle_cursor_button(struct wl_listener *listener, void *data) {
 	struct sway_cursor *cursor = wl_container_of(listener, cursor, button);
-	wlr_idle_notify_activity(cursor->seat->input->server->idle, cursor->seat->wlr_seat);
+	wlr_idle_notify_activity(server.idle, cursor->seat->wlr_seat);
 	struct wlr_event_pointer_button *event = data;
-	dispatch_cursor_button(cursor,
+	dispatch_cursor_button(cursor, event->device,
 			event->time_msec, event->button, event->state);
 	transaction_commit_dirty();
 }
@@ -965,8 +997,9 @@ static void dispatch_cursor_axis(struct sway_cursor *cursor,
 	if (on_titlebar) {
 		enum sway_container_layout layout = container_parent_layout(cont);
 		if (layout == L_TABBED || layout == L_STACKED) {
+			struct sway_node *tabcontainer = node_get_parent(node);
 			struct sway_node *active =
-				seat_get_active_tiling_child(seat, node_get_parent(node));
+				seat_get_active_tiling_child(seat, tabcontainer);
 			list_t *siblings = container_get_siblings(cont);
 			int desired = list_find(siblings, active->sway_container) +
 				event->delta_discrete;
@@ -975,9 +1008,19 @@ static void dispatch_cursor_axis(struct sway_cursor *cursor,
 			} else if (desired >= siblings->length) {
 				desired = siblings->length - 1;
 			}
-			struct sway_container *new_focus = siblings->items[desired];
-			node = seat_get_focus_inactive(seat, &new_focus->node);
-			seat_set_focus(seat, node);
+			struct sway_node *old_focus = seat_get_focus(seat);
+			struct sway_container *new_sibling_con = siblings->items[desired];
+			struct sway_node *new_sibling = &new_sibling_con->node;
+			struct sway_node *new_focus =
+				seat_get_focus_inactive(seat, new_sibling);
+			if (node_has_ancestor(old_focus, tabcontainer)) {
+				seat_set_focus(seat, new_focus);
+			} else {
+				// Scrolling when focus is not in the tabbed container at all
+				seat_set_raw_focus(seat, new_sibling);
+				seat_set_raw_focus(seat, new_focus);
+				seat_set_raw_focus(seat, old_focus);
+			}
 			return;
 		}
 	}
@@ -988,7 +1031,7 @@ static void dispatch_cursor_axis(struct sway_cursor *cursor,
 
 static void handle_cursor_axis(struct wl_listener *listener, void *data) {
 	struct sway_cursor *cursor = wl_container_of(listener, cursor, axis);
-	wlr_idle_notify_activity(cursor->seat->input->server->idle, cursor->seat->wlr_seat);
+	wlr_idle_notify_activity(server.idle, cursor->seat->wlr_seat);
 	struct wlr_event_pointer_axis *event = data;
 	dispatch_cursor_axis(cursor, event);
 	transaction_commit_dirty();
@@ -996,7 +1039,7 @@ static void handle_cursor_axis(struct wl_listener *listener, void *data) {
 
 static void handle_touch_down(struct wl_listener *listener, void *data) {
 	struct sway_cursor *cursor = wl_container_of(listener, cursor, touch_down);
-	wlr_idle_notify_activity(cursor->seat->input->server->idle, cursor->seat->wlr_seat);
+	wlr_idle_notify_activity(server.idle, cursor->seat->wlr_seat);
 	struct wlr_event_touch_down *event = data;
 
 	struct sway_seat *seat = cursor->seat;
@@ -1027,7 +1070,7 @@ static void handle_touch_down(struct wl_listener *listener, void *data) {
 
 static void handle_touch_up(struct wl_listener *listener, void *data) {
 	struct sway_cursor *cursor = wl_container_of(listener, cursor, touch_up);
-	wlr_idle_notify_activity(cursor->seat->input->server->idle, cursor->seat->wlr_seat);
+	wlr_idle_notify_activity(server.idle, cursor->seat->wlr_seat);
 	struct wlr_event_touch_up *event = data;
 	struct wlr_seat *seat = cursor->seat->wlr_seat;
 	// TODO: fall back to cursor simulation if client has not bound to touch
@@ -1037,7 +1080,7 @@ static void handle_touch_up(struct wl_listener *listener, void *data) {
 static void handle_touch_motion(struct wl_listener *listener, void *data) {
 	struct sway_cursor *cursor =
 		wl_container_of(listener, cursor, touch_motion);
-	wlr_idle_notify_activity(cursor->seat->input->server->idle, cursor->seat->wlr_seat);
+	wlr_idle_notify_activity(server.idle, cursor->seat->wlr_seat);
 	struct wlr_event_touch_motion *event = data;
 
 	struct sway_seat *seat = cursor->seat;
@@ -1101,7 +1144,7 @@ static void apply_mapping_from_region(struct wlr_input_device *device,
 
 static void handle_tool_axis(struct wl_listener *listener, void *data) {
 	struct sway_cursor *cursor = wl_container_of(listener, cursor, tool_axis);
-	wlr_idle_notify_activity(cursor->seat->input->server->idle, cursor->seat->wlr_seat);
+	wlr_idle_notify_activity(server.idle, cursor->seat->wlr_seat);
 	struct wlr_event_tablet_tool_axis *event = data;
 	struct sway_input_device *input_device = event->device->data;
 
@@ -1119,15 +1162,15 @@ static void handle_tool_axis(struct wl_listener *listener, void *data) {
 	}
 
 	wlr_cursor_warp_absolute(cursor->cursor, event->device, x, y);
-	cursor_send_pointer_motion(cursor, event->time_msec, true);
+	cursor_send_pointer_motion(cursor, event->time_msec);
 	transaction_commit_dirty();
 }
 
 static void handle_tool_tip(struct wl_listener *listener, void *data) {
 	struct sway_cursor *cursor = wl_container_of(listener, cursor, tool_tip);
-	wlr_idle_notify_activity(cursor->seat->input->server->idle, cursor->seat->wlr_seat);
+	wlr_idle_notify_activity(server.idle, cursor->seat->wlr_seat);
 	struct wlr_event_tablet_tool_tip *event = data;
-	dispatch_cursor_button(cursor, event->time_msec,
+	dispatch_cursor_button(cursor, event->device, event->time_msec,
 			BTN_LEFT, event->state == WLR_TABLET_TOOL_TIP_DOWN ?
 				WLR_BUTTON_PRESSED : WLR_BUTTON_RELEASED);
 	transaction_commit_dirty();
@@ -1135,21 +1178,21 @@ static void handle_tool_tip(struct wl_listener *listener, void *data) {
 
 static void handle_tool_button(struct wl_listener *listener, void *data) {
 	struct sway_cursor *cursor = wl_container_of(listener, cursor, tool_button);
-	wlr_idle_notify_activity(cursor->seat->input->server->idle, cursor->seat->wlr_seat);
+	wlr_idle_notify_activity(server.idle, cursor->seat->wlr_seat);
 	struct wlr_event_tablet_tool_button *event = data;
 	// TODO: the user may want to configure which tool buttons are mapped to
 	// which simulated pointer buttons
 	switch (event->state) {
 	case WLR_BUTTON_PRESSED:
 		if (cursor->tool_buttons == 0) {
-			dispatch_cursor_button(cursor,
+			dispatch_cursor_button(cursor, event->device,
 					event->time_msec, BTN_RIGHT, event->state);
 		}
 		cursor->tool_buttons++;
 		break;
 	case WLR_BUTTON_RELEASED:
 		if (cursor->tool_buttons == 1) {
-			dispatch_cursor_button(cursor,
+			dispatch_cursor_button(cursor, event->device,
 					event->time_msec, BTN_RIGHT, event->state);
 		}
 		cursor->tool_buttons--;
@@ -1189,6 +1232,9 @@ static void handle_request_set_cursor(struct wl_listener *listener,
 
 void cursor_set_image(struct sway_cursor *cursor, const char *image,
 		struct wl_client *client) {
+	if (!(cursor->seat->wlr_seat->capabilities & WL_SEAT_CAPABILITY_POINTER)) {
+		return;
+	}
 	if (!image) {
 		wlr_cursor_set_image(cursor->cursor, NULL, 0, 0, 0, 0, 0, 0);
 	} else if (!cursor->image || strcmp(cursor->image, image) != 0) {
@@ -1271,4 +1317,44 @@ struct sway_cursor *sway_cursor_create(struct sway_seat *seat) {
 	cursor->cursor = wlr_cursor;
 
 	return cursor;
+
+}
+
+/**
+ * Warps the cursor to the middle of the container argument.
+ * Does nothing if the cursor is already inside the container.
+ * If container is NULL, returns without doing anything.
+ */
+void cursor_warp_to_container(struct sway_cursor *cursor,
+		struct sway_container *container) {
+	if (!container) {
+		return;
+	}
+
+	struct wlr_box box;
+	container_get_box(container, &box);
+	if (wlr_box_contains_point(&box, cursor->cursor->x, cursor->cursor->y)) {
+		return;
+	}
+
+	double x = container->x + container->width / 2.0;
+	double y = container->y + container->height / 2.0;
+
+	wlr_cursor_warp(cursor->cursor, NULL, x, y);
+}
+
+/**
+ * Warps the cursor to the middle of the workspace argument.
+ * If workspace is NULL, returns without doing anything.
+ */
+void cursor_warp_to_workspace(struct sway_cursor *cursor,
+		struct sway_workspace *workspace) {
+	if (!workspace) {
+		return;
+	}
+
+	double x = workspace->x + workspace->width / 2.0;
+	double y = workspace->y + workspace->height / 2.0;
+
+	wlr_cursor_warp(cursor->cursor, NULL, x, y);
 }

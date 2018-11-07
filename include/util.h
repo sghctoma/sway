@@ -7,15 +7,6 @@
 #include <wlr/types/wlr_output_layout.h>
 #include <xkbcommon/xkbcommon.h>
 
-enum movement_direction {
-	MOVE_LEFT,
-	MOVE_RIGHT,
-	MOVE_UP,
-	MOVE_DOWN,
-	MOVE_PARENT,
-	MOVE_CHILD,
-};
-
 /**
  * Wrap i into the range [0, max[
  */
@@ -68,15 +59,6 @@ uint32_t parse_color(const char *color);
  */
 bool parse_boolean(const char *boolean, bool current);
 
-/**
- * Given a path string, recurseively resolves any symlinks to their targets
- * (which may be a file, directory) and returns the result.
- * argument is returned. Caller must free the returned buffer.
- * If an error occures, if the path does not exist or if the path corresponds
- * to a dangling symlink, NULL is returned.
- */
-char* resolve_path(const char* path);
-
-bool sway_dir_to_wlr(enum movement_direction dir, enum wlr_direction *out);
+enum wlr_direction opposite_direction(enum wlr_direction d);
 
 #endif

@@ -30,6 +30,7 @@ enum sway_view_prop {
 	VIEW_PROP_WINDOW_ROLE,
 #ifdef HAVE_XWAYLAND
 	VIEW_PROP_X11_WINDOW_ID,
+	VIEW_PROP_X11_PARENT_ID,
 #endif
 };
 
@@ -79,23 +80,7 @@ struct sway_view {
 
 	char *title_format;
 
-	// Our border types are B_NONE, B_PIXEL, B_NORMAL and B_CSD. We normally
-	// just assign this to the border property and ignore the other two.
-	// However, when a view using CSD is tiled, we want to render our own
-	// borders as well. So in this case the border property becomes one of the
-	// first three, and using_csd is true.
-	// Lastly, views can change their decoration mode at any time. When an SSD
-	// view becomes CSD without our approval, we save the SSD border type so it
-	// can be restored if/when the view returns from CSD to SSD.
-	enum sway_container_border border;
-	enum sway_container_border saved_border;
 	bool using_csd;
-
-	int border_thickness;
-	bool border_top;
-	bool border_bottom;
-	bool border_left;
-	bool border_right;
 
 	struct timespec urgent;
 	bool allow_request_urgent;
@@ -115,12 +100,6 @@ struct sway_view {
 	bool destroying;
 
 	list_t *executed_criteria; // struct criteria *
-	list_t *marks;             // char *
-
-	struct wlr_texture *marks_focused;
-	struct wlr_texture *marks_focused_inactive;
-	struct wlr_texture *marks_unfocused;
-	struct wlr_texture *marks_urgent;
 
 	union {
 		struct wlr_xdg_surface_v6 *wlr_xdg_surface_v6;
@@ -226,7 +205,6 @@ struct sway_view_child {
 	struct wl_listener surface_map;
 	struct wl_listener surface_unmap;
 	struct wl_listener surface_destroy;
-	struct wl_listener view_unmap;
 };
 
 struct sway_xdg_popup_v6 {
@@ -256,6 +234,8 @@ const char *view_get_class(struct sway_view *view);
 const char *view_get_instance(struct sway_view *view);
 
 uint32_t view_get_x11_window_id(struct sway_view *view);
+
+uint32_t view_get_x11_parent_id(struct sway_view *view);
 
 const char *view_get_window_role(struct sway_view *view);
 
@@ -329,7 +309,8 @@ void view_destroy(struct sway_view *view);
 
 void view_begin_destroy(struct sway_view *view);
 
-void view_map(struct sway_view *view, struct wlr_surface *wlr_surface);
+void view_map(struct sway_view *view, struct wlr_surface *wlr_surface,
+	bool fullscreen, bool decoration);
 
 void view_unmap(struct sway_view *view);
 
@@ -364,28 +345,6 @@ void view_update_title(struct sway_view *view, bool force);
  * before.
  */
 void view_execute_criteria(struct sway_view *view);
-
-/**
- * Find any view that has the given mark and return it.
- */
-struct sway_view *view_find_mark(char *mark);
-
-/**
- * Find any view that has the given mark and remove the mark from the view.
- * Returns true if it matched a view.
- */
-bool view_find_and_unmark(char *mark);
-
-/**
- * Remove all marks from the view.
- */
-void view_clear_marks(struct sway_view *view);
-
-bool view_has_mark(struct sway_view *view, char *mark);
-
-void view_add_mark(struct sway_view *view, char *mark);
-
-void view_update_marks_textures(struct sway_view *view);
 
 /**
  * Returns true if there's a possibility the view may be rendered on screen.

@@ -65,8 +65,13 @@ void output_enable(struct sway_output *output, struct output_config *oc) {
 		return;
 	}
 	struct wlr_output *wlr_output = output->wlr_output;
+	size_t len = sizeof(output->layers) / sizeof(output->layers[0]);
+	for (size_t i = 0; i < len; ++i) {
+		wl_list_init(&output->layers[i]);
+	}
+	wl_signal_init(&output->events.destroy);
+
 	output->enabled = true;
-	apply_output_config(oc, output);
 	list_add(root->outputs, output);
 
 	output->lx = wlr_output->lx;
@@ -83,25 +88,24 @@ void output_enable(struct sway_output *output, struct output_config *oc) {
 		struct sway_workspace *ws = workspace_create(output, ws_name);
 		// Set each seat's focus if not already set
 		struct sway_seat *seat = NULL;
-		wl_list_for_each(seat, &input_manager->seats, link) {
+		wl_list_for_each(seat, &server.input->seats, link) {
 			if (!seat->has_focus) {
 				seat_set_focus_workspace(seat, ws);
 			}
 		}
 		free(ws_name);
+		ipc_event_workspace(NULL, ws, "init");
 	}
 
-	size_t len = sizeof(output->layers) / sizeof(output->layers[0]);
-	for (size_t i = 0; i < len; ++i) {
-		wl_list_init(&output->layers[i]);
-	}
-	wl_signal_init(&output->events.destroy);
 
-	input_manager_configure_xcursor(input_manager);
+	apply_output_config(oc, output);
+
+	input_manager_configure_xcursor();
 
 	wl_signal_add(&wlr_output->events.mode, &output->mode);
 	wl_signal_add(&wlr_output->events.transform, &output->transform);
 	wl_signal_add(&wlr_output->events.scale, &output->scale);
+	wl_signal_add(&wlr_output->events.present, &output->present);
 	wl_signal_add(&output->damage->events.frame, &output->damage_frame);
 	wl_signal_add(&output->damage->events.destroy, &output->damage_destroy);
 
@@ -213,6 +217,7 @@ void output_disable(struct sway_output *output) {
 	wl_list_remove(&output->mode.link);
 	wl_list_remove(&output->transform.link);
 	wl_list_remove(&output->scale.link);
+	wl_list_remove(&output->present.link);
 	wl_list_remove(&output->damage_destroy.link);
 	wl_list_remove(&output->damage_frame.link);
 
@@ -271,16 +276,14 @@ struct sway_output *output_from_wlr_output(struct wlr_output *output) {
 }
 
 struct sway_output *output_get_in_direction(struct sway_output *reference,
-		enum movement_direction direction) {
-	enum wlr_direction wlr_dir = 0;
-	if (!sway_assert(sway_dir_to_wlr(direction, &wlr_dir),
-				"got invalid direction: %d", direction)) {
+		enum wlr_direction direction) {
+	if (!sway_assert(direction, "got invalid direction: %d", direction)) {
 		return NULL;
 	}
 	int lx = reference->wlr_output->lx + reference->width / 2;
 	int ly = reference->wlr_output->ly + reference->height / 2;
 	struct wlr_output *wlr_adjacent = wlr_output_layout_adjacent_output(
-			root->output_layout, wlr_dir, reference->wlr_output, lx, ly);
+			root->output_layout, direction, reference->wlr_output, lx, ly);
 	if (!wlr_adjacent) {
 		return NULL;
 	}

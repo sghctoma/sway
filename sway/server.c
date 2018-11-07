@@ -83,6 +83,17 @@ bool server_init(struct sway_server *server) {
 		&server->xdg_shell_surface);
 	server->xdg_shell_surface.notify = handle_xdg_shell_surface;
 
+	// TODO: configurable cursor theme and size
+	int cursor_size = 24;
+	const char *cursor_theme = NULL;
+
+	char cursor_size_fmt[16];
+	snprintf(cursor_size_fmt, sizeof(cursor_size_fmt), "%d", cursor_size);
+	setenv("XCURSOR_SIZE", cursor_size_fmt, 1);
+	if (cursor_theme != NULL) {
+		setenv("XCURSOR_THEME", cursor_theme, 1);
+	}
+
 #ifdef HAVE_XWAYLAND
 	server->xwayland.wlr_xwayland =
 		wlr_xwayland_create(server->wl_display, server->compositor, true);
@@ -93,8 +104,8 @@ bool server_init(struct sway_server *server) {
 		&server->xwayland_ready);
 	server->xwayland_ready.notify = handle_xwayland_ready;
 
-	// TODO: configurable cursor theme and size
-	server->xwayland.xcursor_manager = wlr_xcursor_manager_create(NULL, 24);
+	server->xwayland.xcursor_manager =
+		wlr_xcursor_manager_create(cursor_theme, cursor_size);
 	wlr_xcursor_manager_load(server->xwayland.xcursor_manager, 1);
 	struct wlr_xcursor *xcursor = wlr_xcursor_manager_get_xcursor(
 		server->xwayland.xcursor_manager, "left_ptr", 1);
@@ -124,6 +135,9 @@ bool server_init(struct sway_server *server) {
 	server->xdg_decoration.notify = handle_xdg_decoration;
 	wl_list_init(&server->xdg_decorations);
 
+	server->presentation =
+		wlr_presentation_create(server->wl_display, server->backend);
+
 	wlr_export_dmabuf_manager_v1_create(server->wl_display);
 	wlr_screencopy_manager_v1_create(server->wl_display);
 
@@ -142,7 +156,9 @@ bool server_init(struct sway_server *server) {
 	server->dirty_nodes = create_list();
 	server->transactions = create_list();
 
-	input_manager = input_manager_create(server);
+	server->input = input_manager_create(server);
+	input_manager_get_default_seat(); // create seat0
+
 	return true;
 }
 
