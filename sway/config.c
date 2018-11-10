@@ -234,7 +234,10 @@ static void config_defaults(struct sway_config *config) {
 
 	config->smart_gaps = false;
 	config->gaps_inner = 0;
-	config->gaps_outer = 0;
+	config->gaps_outer.top = 0;
+	config->gaps_outer.right = 0;
+	config->gaps_outer.bottom = 0;
+	config->gaps_outer.left = 0;
 
 	if (!(config->active_bar_modifiers = create_list())) goto cleanup;
 
@@ -253,7 +256,6 @@ static void config_defaults(struct sway_config *config) {
 	config->saved_edge_borders = E_NONE;
 
 	// border colors
-	set_color(config->border_colors.focused.border, 0x4C7899);
 	set_color(config->border_colors.focused.border, 0x4C7899);
 	set_color(config->border_colors.focused.background, 0x285577);
 	set_color(config->border_colors.focused.text, 0xFFFFFFFF);
