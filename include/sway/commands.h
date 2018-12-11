@@ -56,7 +56,7 @@ struct cmd_handler *find_handler(char *line, struct cmd_handler *cmd_handlers,
  * all matching containers. Otherwise, it'll run on the `con` container. If
  * `con` is NULL then it'll run on the currently focused container.
  */
-struct cmd_results *execute_command(char *command,  struct sway_seat *seat,
+list_t *execute_command(char *command,  struct sway_seat *seat,
 		struct sway_container *con);
 /**
  * Parse and handles a command during config file loading.
@@ -82,11 +82,11 @@ struct cmd_results *cmd_results_new(enum cmd_status status, const char* input, c
  */
 void free_cmd_results(struct cmd_results *results);
 /**
- * Serializes cmd_results to a JSON string.
+ * Serializes a list of cmd_results to a JSON string.
  *
  * Free the JSON string later on.
  */
-char *cmd_results_to_json(struct cmd_results *results);
+char *cmd_results_to_json(list_t *res_list);
 
 struct cmd_results *add_color(const char *name,
 		char *buffer, const char *color);
@@ -172,7 +172,10 @@ sway_cmd cmd_swaybg_command;
 sway_cmd cmd_swaynag_command;
 sway_cmd cmd_swap;
 sway_cmd cmd_tiling_drag;
+sway_cmd cmd_title_align;
 sway_cmd cmd_title_format;
+sway_cmd cmd_titlebar_border_thickness;
+sway_cmd cmd_titlebar_padding;
 sway_cmd cmd_unmark;
 sway_cmd cmd_urgent;
 sway_cmd cmd_workspace;
@@ -185,6 +188,7 @@ sway_cmd bar_cmd_bindsym;
 sway_cmd bar_cmd_colors;
 sway_cmd bar_cmd_context_button;
 sway_cmd bar_cmd_font;
+sway_cmd bar_cmd_gaps;
 sway_cmd bar_cmd_mode;
 sway_cmd bar_cmd_modifier;
 sway_cmd bar_cmd_output;
@@ -198,6 +202,7 @@ sway_cmd bar_cmd_separator_symbol;
 sway_cmd bar_cmd_status_command;
 sway_cmd bar_cmd_pango_markup;
 sway_cmd bar_cmd_strip_workspace_numbers;
+sway_cmd bar_cmd_strip_workspace_name;
 sway_cmd bar_cmd_swaybar_command;
 sway_cmd bar_cmd_tray_output;
 sway_cmd bar_cmd_tray_padding;
@@ -229,6 +234,7 @@ sway_cmd input_cmd_map_to_output;
 sway_cmd input_cmd_middle_emulation;
 sway_cmd input_cmd_natural_scroll;
 sway_cmd input_cmd_pointer_accel;
+sway_cmd input_cmd_scroll_factor;
 sway_cmd input_cmd_repeat_delay;
 sway_cmd input_cmd_repeat_rate;
 sway_cmd input_cmd_scroll_button;

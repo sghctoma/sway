@@ -1,4 +1,4 @@
-#define _XOPEN_SOURCE 700
+#define _POSIX_C_SOURCE 200809L
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -95,14 +95,6 @@ list_t *split_string(const char *str, const char *delims) {
 	}
 	free(copy);
 	return res;
-}
-
-void free_flat_list(list_t *list) {
-	int i;
-	for (i = 0; i < list->length; ++i) {
-		free(list->items[i]);
-	}
-	list_free(list);
 }
 
 char **split_args(const char *start, int *argc) {

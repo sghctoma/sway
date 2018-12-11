@@ -1,4 +1,4 @@
-#define _XOPEN_SOURCE 500
+#define _POSIX_C_SOURCE 200809L
 #include <assert.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -31,6 +31,7 @@ void free_workspaces(struct wl_list *list) {
 	wl_list_for_each_safe(ws, tmp, list, link) {
 		wl_list_remove(&ws->link);
 		free(ws->name);
+		free(ws->label);
 		free(ws);
 	}
 }

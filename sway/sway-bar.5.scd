@@ -50,12 +50,23 @@ Sway allows configuring swaybar in the sway configuration file.
 *workspace\_buttons* yes|no
 	Enables or disables workspace buttons on the bar. Default is _yes_.
 
+*strip\_workspace\_name* yes|no
+	If set to _yes_, then workspace names will be omitted from the workspace
+	button and only the custom number will be shown. Default is _no_.
+
 *strip\_workspace\_numbers* yes|no
 	If set to _yes_, then workspace numbers will be omitted from the workspace
 	button and only the custom name will be shown. Default is _no_.
 
 *binding\_mode\_indicator* yes|no
 	Enable or disable binding mode indicator. Default is _yes_.
+
+*gaps* <all> | <horizontal> <vertical> | <top> <right> <bottom> <left>
+	Sets the gaps from the edge of the screen for the bar. Gaps can either be
+	set all at once, per direction, or per side. Note that only sides that
+	touch an edge of the screen can have gaps. For the side that does not
+	touch an edge of the screen, per-side outer gaps for workspaces may be of
+	use.
 
 *height* <height>
 	Sets the height of the bar. Default height will match the font size.

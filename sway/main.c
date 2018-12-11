@@ -1,5 +1,4 @@
-#define _XOPEN_SOURCE 700
-#define _POSIX_C_SOURCE 200112L
+#define _POSIX_C_SOURCE 200809L
 #include <getopt.h>
 #include <pango/pangocairo.h>
 #include <signal.h>
@@ -393,11 +392,15 @@ int main(int argc, char **argv) {
 	wlr_log(WLR_DEBUG, "Running deferred commands");
 	while (config->cmd_queue->length) {
 		char *line = config->cmd_queue->items[0];
-		struct cmd_results *res = execute_command(line, NULL, NULL);
-		if (res->status != CMD_SUCCESS) {
-			wlr_log(WLR_ERROR, "Error on line '%s': %s", line, res->error);
+		list_t *res_list = execute_command(line, NULL, NULL);
+		for (int i = 0; i < res_list->length; ++i) {
+			struct cmd_results *res = res_list->items[i];
+			if (res->status != CMD_SUCCESS) {
+				wlr_log(WLR_ERROR, "Error on line '%s': %s", line, res->error);
+			}
+			free_cmd_results(res);
 		}
-		free_cmd_results(res);
+		list_free(res_list);
 		free(line);
 		list_del(config->cmd_queue, 0);
 	}

@@ -1,8 +1,9 @@
-#define _XOPEN_SOURCE 700
+#define _POSIX_C_SOURCE 200809L
 #include <assert.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <float.h>
 #include <math.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -23,7 +24,8 @@ int numlen(int n) {
 	if (n == 0) {
 		return 1;
 	}
-	return log10(n) + 1;
+	// Account for the '-' in negative numbers.
+	return log10(abs(n)) + (n > 0 ? 1 : 2);
 }
 
 static struct modifier_key {
@@ -138,6 +140,17 @@ bool parse_boolean(const char *boolean, bool current) {
 	}
 	// All other values are false to match i3
 	return false;
+}
+
+float parse_float(const char *value) {
+	errno = 0;
+	char *end;
+	float flt = strtof(value, &end);
+	if (*end || errno) {
+		wlr_log(WLR_DEBUG, "Invalid float value '%s', defaulting to NAN", value);
+		return NAN;
+	}
+	return flt;
 }
 
 enum wlr_direction opposite_direction(enum wlr_direction d) {

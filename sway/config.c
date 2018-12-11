@@ -1,5 +1,4 @@
-#define _POSIX_C_SOURCE 200809L
-#define _XOPEN_SOURCE 700
+#define _XOPEN_SOURCE 600 // for realpath
 #include <stdio.h>
 #include <stdbool.h>
 #include <stdlib.h>
@@ -39,26 +38,24 @@
 struct sway_config *config = NULL;
 
 static void free_mode(struct sway_mode *mode) {
-	int i;
-
 	if (!mode) {
 		return;
 	}
 	free(mode->name);
 	if (mode->keysym_bindings) {
-		for (i = 0; i < mode->keysym_bindings->length; i++) {
+		for (int i = 0; i < mode->keysym_bindings->length; i++) {
 			free_sway_binding(mode->keysym_bindings->items[i]);
 		}
 		list_free(mode->keysym_bindings);
 	}
 	if (mode->keycode_bindings) {
-		for (i = 0; i < mode->keycode_bindings->length; i++) {
+		for (int i = 0; i < mode->keycode_bindings->length; i++) {
 			free_sway_binding(mode->keycode_bindings->items[i]);
 		}
 		list_free(mode->keycode_bindings);
 	}
 	if (mode->mouse_bindings) {
-		for (i = 0; i < mode->mouse_bindings->length; i++) {
+		for (int i = 0; i < mode->mouse_bindings->length; i++) {
 			free_sway_binding(mode->mouse_bindings->items[i]);
 		}
 		list_free(mode->mouse_bindings);
@@ -213,6 +210,10 @@ static void config_defaults(struct sway_config *config) {
 	config->urgent_timeout = 500;
 	config->popup_during_fullscreen = POPUP_SMART;
 
+	config->titlebar_border_thickness = 1;
+	config->titlebar_h_padding = 5;
+	config->titlebar_v_padding = 4;
+
 	// floating view
 	config->floating_maximum_width = 0;
 	config->floating_maximum_height = 0;
@@ -230,6 +231,7 @@ static void config_defaults(struct sway_config *config) {
 	config->auto_back_and_forth = false;
 	config->reading = false;
 	config->show_marks = true;
+	config->title_align = ALIGN_LEFT;
 	config->tiling_drag = true;
 
 	config->smart_gaps = false;
@@ -312,27 +314,16 @@ static char *get_config_path(void) {
 		SYSCONFDIR "/i3/config",
 	};
 
-	if (!getenv("XDG_CONFIG_HOME")) {
-		char *home = getenv("HOME");
-		char *config_home = malloc(strlen(home) + strlen("/.config") + 1);
-		if (!config_home) {
-			wlr_log(WLR_ERROR, "Unable to allocate $HOME/.config");
-		} else {
-			strcpy(config_home, home);
-			strcat(config_home, "/.config");
-			setenv("XDG_CONFIG_HOME", config_home, 1);
-			wlr_log(WLR_DEBUG, "Set XDG_CONFIG_HOME to %s", config_home);
-			free(config_home);
-		}
+	char *config_home = getenv("XDG_CONFIG_HOME");
+	if (!config_home || !*config_home) {
+		config_paths[1] = "$HOME/.config/sway/config";
+		config_paths[3] = "$HOME/.config/i3/config";
 	}
 
-	wordexp_t p;
-	char *path;
-
-	int i;
-	for (i = 0; i < (int)(sizeof(config_paths) / sizeof(char *)); ++i) {
-		if (wordexp(config_paths[i], &p, 0) == 0) {
-			path = strdup(p.we_wordv[0]);
+	for (size_t i = 0; i < sizeof(config_paths) / sizeof(char *); ++i) {
+		wordexp_t p;
+		if (wordexp(config_paths[i], &p, WRDE_UNDEF) == 0) {
+			char *path = strdup(p.we_wordv[0]);
 			wordfree(&p);
 			if (file_exists(path)) {
 				return path;
@@ -341,7 +332,7 @@ static char *get_config_path(void) {
 		}
 	}
 
-	return NULL; // Not reached
+	return NULL;
 }
 
 static bool load_config(const char *path, struct sway_config *config,
@@ -453,7 +444,7 @@ bool load_main_config(const char *file, bool is_active, bool validating) {
 			}
 		}
 
-		free_flat_list(secconfigs);
+		list_free_items_and_destroy(secconfigs);
 	}
 	*/
 
@@ -661,8 +652,7 @@ bool read_config(FILE *file, struct sway_config *config,
 
 			if (read + length > config_size) {
 				wlr_log(WLR_ERROR, "Config file changed during reading");
-				list_foreach(stack, free);
-				list_free(stack);
+				list_free_items_and_destroy(stack);
 				free(line);
 				return false;
 			}
@@ -691,11 +681,12 @@ bool read_config(FILE *file, struct sway_config *config,
 		}
 		char *expanded = expand_line(block, line, brace_detected > 0);
 		if (!expanded) {
-			list_foreach(stack, free);
-			list_free(stack);
+			list_free_items_and_destroy(stack);
 			free(line);
 			return false;
 		}
+		config->current_config_line_number = line_number;
+		config->current_config_line = line;
 		struct cmd_results *res;
 		if (block && strcmp(block, "<commands>") == 0) {
 			// Special case
@@ -755,10 +746,35 @@ bool read_config(FILE *file, struct sway_config *config,
 		free(line);
 		free_cmd_results(res);
 	}
-	list_foreach(stack, free);
-	list_free(stack);
+	list_free_items_and_destroy(stack);
+	config->current_config_line_number = 0;
+	config->current_config_line = NULL;
 
 	return success;
+}
+
+void config_add_swaynag_warning(char *fmt, ...) {
+	if (config->reading && !config->validating) {
+		va_list args;
+		va_start(args, fmt);
+		size_t length = vsnprintf(NULL, 0, fmt, args) + 1;
+		va_end(args);
+
+		char *temp = malloc(length + 1);
+		if (!temp) {
+			wlr_log(WLR_ERROR, "Failed to allocate buffer for warning.");
+			return;
+		}
+
+		va_start(args, fmt);
+		vsnprintf(temp, length, fmt, args);
+		va_end(args);
+
+		swaynag_log(config->swaynag_command, &config->swaynag_config_errors,
+			"Warning on line %i (%s) '%s': %s",
+			config->current_config_line_number, config->current_config_path,
+			config->current_config_line, temp);
+	}
 }
 
 char *do_var_replacement(char *str) {

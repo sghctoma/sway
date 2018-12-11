@@ -43,8 +43,7 @@ struct cmd_results *checkarg(int argc, const char *name, enum expected_args type
 }
 
 void apply_seat_config(struct seat_config *seat_config) {
-	int i;
-	i = list_seq_find(config->seat_configs, seat_name_cmp, seat_config->name);
+	int i = list_seq_find(config->seat_configs, seat_name_cmp, seat_config->name);
 	if (i >= 0) {
 		// merge existing config
 		struct seat_config *sc = config->seat_configs->items[i];
@@ -103,6 +102,9 @@ static struct cmd_handler handlers[] = {
 	{ "smart_borders", cmd_smart_borders },
 	{ "smart_gaps", cmd_smart_gaps },
 	{ "tiling_drag", cmd_tiling_drag },
+	{ "title_align", cmd_title_align },
+	{ "titlebar_border_thickness", cmd_titlebar_border_thickness },
+	{ "titlebar_padding", cmd_titlebar_padding },
 	{ "workspace", cmd_workspace },
 	{ "workspace_auto_back_and_forth", cmd_ws_auto_back_and_forth },
 };
@@ -212,12 +214,9 @@ static void set_config_node(struct sway_node *node) {
 	}
 }
 
-struct cmd_results *execute_command(char *_exec, struct sway_seat *seat,
+list_t *execute_command(char *_exec, struct sway_seat *seat,
 		struct sway_container *con) {
-	// Even though this function will process multiple commands we will only
-	// return the last error, if any (for now). (Since we have access to an
-	// error string we could e.g. concatenate all errors there.)
-	struct cmd_results *results = NULL;
+	list_t *res_list = create_list();
 	char *exec = strdup(_exec);
 	char *head = exec;
 	char *cmdlist;
@@ -232,15 +231,6 @@ struct cmd_results *execute_command(char *_exec, struct sway_seat *seat,
 		}
 	}
 
-	// This is the container or workspace which this command will run on.
-	// Ignored if the command string contains criteria.
-	struct sway_node *node;
-	if (con) {
-		node = &con->node;
-	} else {
-		node = seat_get_focus_inactive(seat, &root->node);
-	}
-
 	config->handler_context.seat = seat;
 
 	head = exec;
@@ -251,8 +241,8 @@ struct cmd_results *execute_command(char *_exec, struct sway_seat *seat,
 			char *error = NULL;
 			struct criteria *criteria = criteria_parse(head, &error);
 			if (!criteria) {
-				results = cmd_results_new(CMD_INVALID, head,
-					"%s", error);
+				list_add(res_list, cmd_results_new(CMD_INVALID, head,
+					"%s", error));
 				free(error);
 				goto cleanup;
 			}
@@ -288,10 +278,8 @@ struct cmd_results *execute_command(char *_exec, struct sway_seat *seat,
 			}
 			struct cmd_handler *handler = find_handler(argv[0], NULL, 0);
 			if (!handler) {
-				if (results) {
-					free_cmd_results(results);
-				}
-				results = cmd_results_new(CMD_INVALID, cmd, "Unknown/invalid command");
+				list_add(res_list, cmd_results_new(CMD_INVALID, cmd,
+							"Unknown/invalid command"));
 				free_argv(argc, argv);
 				goto cleanup;
 			}
@@ -303,31 +291,26 @@ struct cmd_results *execute_command(char *_exec, struct sway_seat *seat,
 			}
 
 			if (!config->handler_context.using_criteria) {
+				// The container or workspace which this command will run on.
+				struct sway_node *node = con ? &con->node :
+						seat_get_focus_inactive(seat, &root->node);
 				set_config_node(node);
 				struct cmd_results *res = handler->handle(argc-1, argv+1);
-				if (res->status != CMD_SUCCESS) {
+				list_add(res_list, res);
+				if (res->status == CMD_INVALID) {
 					free_argv(argc, argv);
-					if (results) {
-						free_cmd_results(results);
-					}
-					results = res;
 					goto cleanup;
 				}
-				free_cmd_results(res);
 			} else {
 				for (int i = 0; i < views->length; ++i) {
 					struct sway_view *view = views->items[i];
 					set_config_node(&view->container->node);
 					struct cmd_results *res = handler->handle(argc-1, argv+1);
-					if (res->status != CMD_SUCCESS) {
+					list_add(res_list, res);
+					if (res->status == CMD_INVALID) {
 						free_argv(argc, argv);
-						if (results) {
-							free_cmd_results(results);
-						}
-						results = res;
 						goto cleanup;
 					}
-					free_cmd_results(res);
 				}
 			}
 			free_argv(argc, argv);
@@ -336,10 +319,7 @@ struct cmd_results *execute_command(char *_exec, struct sway_seat *seat,
 cleanup:
 	free(exec);
 	list_free(views);
-	if (!results) {
-		results = cmd_results_new(CMD_SUCCESS, NULL, NULL);
-	}
-	return results;
+	return res_list;
 }
 
 // this is like execute_command above, except:
@@ -417,6 +397,7 @@ struct cmd_results *config_command(char *exec) {
 	// Strip quotes and unescape the string
 	for (int i = handler->handle == cmd_set ? 2 : 1; i < argc; ++i) {
 		if (handler->handle != cmd_exec && handler->handle != cmd_exec_always
+				&& handler->handle != cmd_mode
 				&& handler->handle != cmd_bindsym
 				&& handler->handle != cmd_bindcode
 				&& handler->handle != cmd_set
@@ -571,20 +552,25 @@ void free_cmd_results(struct cmd_results *results) {
 	free(results);
 }
 
-char *cmd_results_to_json(struct cmd_results *results) {
+char *cmd_results_to_json(list_t *res_list) {
 	json_object *result_array = json_object_new_array();
-	json_object *root = json_object_new_object();
-	json_object_object_add(root, "success",
-			json_object_new_boolean(results->status == CMD_SUCCESS));
-	if (results->input) {
-		json_object_object_add(
-				root, "input", json_object_new_string(results->input));
+	for (int i = 0; i < res_list->length; ++i) {
+		struct cmd_results *results = res_list->items[i];
+		json_object *root = json_object_new_object();
+		json_object_object_add(root, "success",
+				json_object_new_boolean(results->status == CMD_SUCCESS));
+		if (results->error) {
+			json_object_object_add(root, "parse_error",
+					json_object_new_boolean(results->status == CMD_INVALID));
+			json_object_object_add(
+					root, "error", json_object_new_string(results->error));
+		}
+		if (results->input) {
+			json_object_object_add(
+					root, "input", json_object_new_string(results->input));
+		}
+		json_object_array_add(result_array, root);
 	}
-	if (results->error) {
-		json_object_object_add(
-				root, "error", json_object_new_string(results->error));
-	}
-	json_object_array_add(result_array, root);
 	const char *json = json_object_to_json_string(result_array);
 	char *res = strdup(json);
 	json_object_put(result_array);

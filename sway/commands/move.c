@@ -1,4 +1,4 @@
-#define _XOPEN_SOURCE 500
+#define _POSIX_C_SOURCE 200809L
 #include <ctype.h>
 #include <stdbool.h>
 #include <string.h>
@@ -216,6 +216,7 @@ static void container_move_to_container(struct sway_container *container,
 		return;
 	}
 	if (container_is_floating(container)) {
+		container_move_to_workspace(container, destination->workspace);
 		return;
 	}
 	struct sway_workspace *old_workspace = container->workspace;

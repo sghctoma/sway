@@ -1,4 +1,4 @@
-#define _XOPEN_SOURCE 500
+#define _POSIX_C_SOURCE 200809L
 #include <getopt.h>
 #include <stdbool.h>
 #include <stdlib.h>
@@ -147,10 +147,8 @@ void swaynag_type_free(struct swaynag_type *type) {
 }
 
 void swaynag_types_free(list_t *types) {
-	while (types->length) {
-		struct swaynag_type *type = types->items[0];
-		swaynag_type_free(type);
-		list_del(types, 0);
+	for (int i = 0; i < types->length; ++i) {
+		swaynag_type_free(types->items[i]);
 	}
 	list_free(types);
 }

@@ -1,4 +1,4 @@
-#define _XOPEN_SOURCE 500
+#define _POSIX_C_SOURCE 200809L
 #include <stdlib.h>
 #include <string.h>
 #include <wlr/util/log.h>
@@ -30,6 +30,7 @@ struct swaybar_config *init_config(void) {
 	config->hidden_state = strdup("hide");
 	config->sep_symbol = NULL;
 	config->strip_workspace_numbers = false;
+	config->strip_workspace_name = false;
 	config->binding_mode_indicator = true;
 	config->wrap_scroll = false;
 	config->workspace_buttons = true;
@@ -38,6 +39,12 @@ struct swaybar_config *init_config(void) {
 
 	/* height */
 	config->height = 0;
+
+	/* gaps */
+	config->gaps.top = 0;
+	config->gaps.right = 0;
+	config->gaps.bottom = 0;
+	config->gaps.left = 0;
 
 	/* colors */
 	config->colors.background = 0x000000FF;

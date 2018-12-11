@@ -1,10 +1,11 @@
-#define _XOPEN_SOURCE 700
+#define _POSIX_C_SOURCE 200809L
 #include <math.h>
 #ifdef __linux__
 #include <linux/input-event-codes.h>
 #elif __FreeBSD__
 #include <dev/evdev/input-event-codes.h>
 #endif
+#include <float.h>
 #include <limits.h>
 #include <wlr/types/wlr_cursor.h>
 #include <wlr/types/wlr_xcursor_manager.h>
@@ -63,7 +64,7 @@ static struct sway_node *node_at_coords(
 		struct sway_seat *seat, double lx, double ly,
 		struct wlr_surface **surface, double *sx, double *sy) {
 	// check for unmanaged views first
-#ifdef HAVE_XWAYLAND
+#if HAVE_XWAYLAND
 	struct wl_list *unmanaged = &root->xwayland_unmanaged;
 	struct sway_xwayland_unmanaged *unmanaged_surface;
 	wl_list_for_each_reverse(unmanaged_surface, unmanaged, link) {
@@ -348,7 +349,7 @@ static void handle_move_tiling_motion(struct sway_seat *seat,
 	}
 
 	// Find the closest edge
-	size_t thickness = fmin(con->view->width, con->view->height) * 0.3;
+	size_t thickness = fmin(con->content_width, con->content_height) * 0.3;
 	size_t closest_dist = INT_MAX;
 	size_t dist;
 	seat->op_target_edge = WLR_EDGE_NONE;
@@ -374,10 +375,10 @@ static void handle_move_tiling_motion(struct sway_seat *seat,
 	}
 
 	seat->op_target_node = node;
-	seat->op_drop_box.x = con->view->x;
-	seat->op_drop_box.y = con->view->y;
-	seat->op_drop_box.width = con->view->width;
-	seat->op_drop_box.height = con->view->height;
+	seat->op_drop_box.x = con->content_x;
+	seat->op_drop_box.y = con->content_y;
+	seat->op_drop_box.width = con->content_width;
+	seat->op_drop_box.height = con->content_height;
 	resize_box(&seat->op_drop_box, seat->op_target_edge, thickness);
 	desktop_damage_box(&seat->op_drop_box);
 }
@@ -498,13 +499,10 @@ static void handle_resize_floating_motion(struct sway_seat *seat,
 	con->width += relative_grow_width;
 	con->height += relative_grow_height;
 
-	if (con->view) {
-		struct sway_view *view = con->view;
-		view->x += relative_grow_x;
-		view->y += relative_grow_y;
-		view->width += relative_grow_width;
-		view->height += relative_grow_height;
-	}
+	con->content_x += relative_grow_x;
+	con->content_y += relative_grow_y;
+	con->content_width += relative_grow_width;
+	con->content_height += relative_grow_height;
 
 	arrange_container(con);
 }
@@ -863,8 +861,8 @@ void dispatch_cursor_button(struct sway_cursor *cursor,
 	}
 
 	// Handle tiling resize via border
-	if (resize_edge && button == BTN_LEFT && state == WLR_BUTTON_PRESSED &&
-			!is_floating) {
+	if (cont && resize_edge && button == BTN_LEFT &&
+			state == WLR_BUTTON_PRESSED && !is_floating) {
 		seat_set_focus_container(seat, cont);
 		seat_begin_resize_tiling(seat, cont, button, edge);
 		return;
@@ -873,7 +871,8 @@ void dispatch_cursor_button(struct sway_cursor *cursor,
 	// Handle tiling resize via mod
 	bool mod_pressed = keyboard &&
 		(wlr_keyboard_get_modifiers(keyboard) & config->floating_mod);
-	if (!is_floating_or_child && mod_pressed && state == WLR_BUTTON_PRESSED) {
+	if (cont && !is_floating_or_child && mod_pressed &&
+			state == WLR_BUTTON_PRESSED) {
 		uint32_t btn_resize = config->floating_mod_inverse ?
 			BTN_LEFT : BTN_RIGHT;
 		if (button == btn_resize) {
@@ -901,7 +900,7 @@ void dispatch_cursor_button(struct sway_cursor *cursor,
 	}
 
 	// Handle beginning floating move
-	if (is_floating_or_child && !is_fullscreen_or_child &&
+	if (cont && is_floating_or_child && !is_fullscreen_or_child &&
 			state == WLR_BUTTON_PRESSED) {
 		uint32_t btn_move = config->floating_mod_inverse ? BTN_RIGHT : BTN_LEFT;
 		if (button == btn_move && state == WLR_BUTTON_PRESSED &&
@@ -916,7 +915,7 @@ void dispatch_cursor_button(struct sway_cursor *cursor,
 	}
 
 	// Handle beginning floating resize
-	if (is_floating_or_child && !is_fullscreen_or_child &&
+	if (cont && is_floating_or_child && !is_fullscreen_or_child &&
 			state == WLR_BUTTON_PRESSED) {
 		// Via border
 		if (button == BTN_LEFT && resize_edge != WLR_EDGE_NONE) {
@@ -981,6 +980,8 @@ static void handle_cursor_button(struct wl_listener *listener, void *data) {
 static void dispatch_cursor_axis(struct sway_cursor *cursor,
 		struct wlr_event_pointer_axis *event) {
 	struct sway_seat *seat = cursor->seat;
+	struct sway_input_device *input_device = event->device->data;
+	struct input_config *ic = input_device_get_config(input_device);
 
 	// Determine what's under the cursor
 	struct wlr_surface *surface = NULL;
@@ -992,6 +993,8 @@ static void dispatch_cursor_axis(struct sway_cursor *cursor,
 	enum wlr_edges edge = cont ? find_edge(cont, cursor) : WLR_EDGE_NONE;
 	bool on_border = edge != WLR_EDGE_NONE;
 	bool on_titlebar = cont && !on_border && !surface;
+	float scroll_factor =
+		(ic == NULL || ic->scroll_factor == FLT_MIN) ? 1.0f : ic->scroll_factor;
 
 	// Scrolling on a tabbed or stacked title bar
 	if (on_titlebar) {
@@ -1002,7 +1005,7 @@ static void dispatch_cursor_axis(struct sway_cursor *cursor,
 				seat_get_active_tiling_child(seat, tabcontainer);
 			list_t *siblings = container_get_siblings(cont);
 			int desired = list_find(siblings, active->sway_container) +
-				event->delta_discrete;
+				round(scroll_factor * event->delta_discrete);
 			if (desired < 0) {
 				desired = 0;
 			} else if (desired >= siblings->length) {
@@ -1026,7 +1029,8 @@ static void dispatch_cursor_axis(struct sway_cursor *cursor,
 	}
 
 	wlr_seat_pointer_notify_axis(cursor->seat->wlr_seat, event->time_msec,
-		event->orientation, event->delta, event->delta_discrete, event->source);
+		event->orientation, scroll_factor * event->delta,
+		round(scroll_factor * event->delta_discrete), event->source);
 }
 
 static void handle_cursor_axis(struct wl_listener *listener, void *data) {

@@ -130,8 +130,9 @@ They are expected to be used with *bindsym* or at runtime through *swaymsg*(1).
 *focus* mode\_toggle
 	Moves focus between the floating and tiled layers.
 
-*fullscreen*
-	Toggles fullscreen for the focused view.
+*fullscreen* [enable|disable|toggle]
+	Makes focused view fullscreen, non-fullscreen, or the opposite of what it
+	is now. If no argument is given, it does the same as _toggle_.
 
 *gaps* inner|outer|horizontal|vertical|top|right|bottom|left all|current
 set|plus|minus <amount>
@@ -276,14 +277,16 @@ runtime.
 
 		for\_window <criteria> move container to output <output>
 
-*bindsym* [--release|--locked] [--input-device=<device>] <key combo> <command>
+*bindsym* [--release|--locked] [--input-device=<device>] [--no-warn] <key combo> <command>
 	Binds _key combo_ to execute the sway command _command_ when pressed. You
 	may use XKB key names here (*xev*(1) is a good tool for discovering these).
 	With the flag _--release_, the command is executed when the key combo is
 	released. Unless the flag _--locked_ is set, the command will not be run
 	when a screen locking program is active. If _input-device_ is given, the
 	binding will only be executed for that input device and will be executed
-	instead of any binding that is generic to all devices.
+	instead of any binding that is generic to all devices. By default, if you
+	overwrite a binding, swaynag will give you a warning. To silence this, use
+	the _--no-warn_ flag.
 
 	Example:
 ```
@@ -291,7 +294,7 @@ runtime.
 		bindsym Mod1+Shift+f exec firefox
 ```
 
-	*bindcode* [--release|--locked] [--input-device=<device>] <code> <command>
+	*bindcode* [--release|--locked] [--input-device=<device>] [--no-warn] <code> <command>
 	is also available for binding with key codes instead of key names.
 
 *client.<class>* <border> <background> <text> <indicator> <child\_border>
@@ -436,6 +439,16 @@ The default colors are:
 *font* <font>
 	Sets font for use in title bars in Pango format.
 
+*titlebar\_border\_thickness* <thickness>
+	Thickness of the titlebar border in pixels
+
+*titlebar\_padding* <horizontal> [<vertical>]
+	Padding of the text in the titlebar. _horizontal_ value affects horizontal 
+	padding of the text while _vertical_ value affects vertical padding (space 
+	above and below text). Padding includes titlebar borders so their value 
+	should be greater than titlebar\_border\_thickness. If _vertical_ value is
+	not specified it is set to the _horizontal_ value. 
+
 *for\_window* <criteria> <command>
 	Whenever a window that matches _criteria_ appears, run list of commands.
 	See *CRITERIA* for more details.
@@ -544,6 +557,11 @@ The default colors are:
 *opacity* <value>
 	Set the opacity of the window between 0 (completely transparent) and 1
 	(completely opaque).
+
+*title\_align* left|center|right
+	Sets the title alignment. If _right_ is selected and _show\_marks_ is set
+	to _yes_, the marks will be shown on the _left_ side instead of the
+	_right_ side.
 
 *unmark* [<identifier>]
 	*unmark* will remove _identifier_ from the list of current marks on a

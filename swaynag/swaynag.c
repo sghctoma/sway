@@ -1,4 +1,4 @@
-#define _XOPEN_SOURCE 500
+#define _POSIX_C_SOURCE 200809L
 #include <stdlib.h>
 #include <assert.h>
 #include <sys/stat.h>
@@ -49,14 +49,17 @@ static void swaynag_button_execute(struct swaynag *swaynag,
 			if (fork() == 0) {
 				// Child of the child. Will be reparented to the init process
 				char *terminal = getenv("TERMINAL");
-				if (terminal && strlen(terminal)) {
+				if (button->terminal && terminal && strlen(terminal)) {
 					wlr_log(WLR_DEBUG, "Found $TERMINAL: %s", terminal);
 					if (!terminal_execute(terminal, button->action)) {
 						swaynag_destroy(swaynag);
 						exit(EXIT_FAILURE);
 					}
 				} else {
-					wlr_log(WLR_DEBUG, "$TERMINAL not found. Running directly");
+					if (button->terminal) {
+						wlr_log(WLR_DEBUG,
+								"$TERMINAL not found. Running directly");
+					}
 					execl("/bin/sh", "/bin/sh", "-c", button->action, NULL);
 				}
 			}
@@ -404,9 +407,8 @@ void swaynag_destroy(struct swaynag *swaynag) {
 	swaynag->run_display = false;
 
 	free(swaynag->message);
-	while (swaynag->buttons->length) {
-		struct swaynag_button *button = swaynag->buttons->items[0];
-		list_del(swaynag->buttons, 0);
+	for (int i = 0; i < swaynag->buttons->length; ++i) {
+		struct swaynag_button *button = swaynag->buttons->items[i];
 		free(button->text);
 		free(button->action);
 		free(button);

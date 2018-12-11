@@ -153,18 +153,21 @@ static bool ipc_parse_config(
 		return false;
 	}
 	json_object *markup, *mode, *hidden_state, *position, *status_command;
-	json_object *font, *bar_height, *wrap_scroll, *workspace_buttons, *strip_workspace_numbers;
-	json_object *binding_mode_indicator, *verbose, *colors, *sep_symbol, *outputs;
-	json_object *bindings;
+	json_object *font, *gaps, *bar_height, *wrap_scroll, *workspace_buttons;
+	json_object *strip_workspace_numbers, *strip_workspace_name;
+	json_object *binding_mode_indicator, *verbose, *colors, *sep_symbol;
+	json_object *outputs, *bindings;
 	json_object_object_get_ex(bar_config, "mode", &mode);
 	json_object_object_get_ex(bar_config, "hidden_state", &hidden_state);
 	json_object_object_get_ex(bar_config, "position", &position);
 	json_object_object_get_ex(bar_config, "status_command", &status_command);
 	json_object_object_get_ex(bar_config, "font", &font);
+	json_object_object_get_ex(bar_config, "gaps", &gaps);
 	json_object_object_get_ex(bar_config, "bar_height", &bar_height);
 	json_object_object_get_ex(bar_config, "wrap_scroll", &wrap_scroll);
 	json_object_object_get_ex(bar_config, "workspace_buttons", &workspace_buttons);
 	json_object_object_get_ex(bar_config, "strip_workspace_numbers", &strip_workspace_numbers);
+	json_object_object_get_ex(bar_config, "strip_workspace_name", &strip_workspace_name);
 	json_object_object_get_ex(bar_config, "binding_mode_indicator", &binding_mode_indicator);
 	json_object_object_get_ex(bar_config, "verbose", &verbose);
 	json_object_object_get_ex(bar_config, "separator_symbol", &sep_symbol);
@@ -190,6 +193,9 @@ static bool ipc_parse_config(
 	if (strip_workspace_numbers) {
 		config->strip_workspace_numbers = json_object_get_boolean(strip_workspace_numbers);
 	}
+	if (strip_workspace_name) {
+		config->strip_workspace_name = json_object_get_boolean(strip_workspace_name);
+	}
 	if (binding_mode_indicator) {
 		config->binding_mode_indicator = json_object_get_boolean(binding_mode_indicator);
 	}
@@ -201,6 +207,24 @@ static bool ipc_parse_config(
 	}
 	if (bar_height) {
 		config->height = json_object_get_int(bar_height);
+	}
+	if (gaps) {
+		json_object *top = json_object_object_get(gaps, "top");
+		if (top) {
+			config->gaps.top = json_object_get_int(top);
+		}
+		json_object *right = json_object_object_get(gaps, "right");
+		if (right) {
+			config->gaps.right = json_object_get_int(right);
+		}
+		json_object *bottom = json_object_object_get(gaps, "bottom");
+		if (bottom) {
+			config->gaps.bottom = json_object_get_int(bottom);
+		}
+		json_object *left = json_object_object_get(gaps, "left");
+		if (left) {
+			config->gaps.left = json_object_get_int(left);
+		}
 	}
 	if (markup) {
 		config->pango_markup = json_object_get_boolean(markup);
@@ -298,6 +322,24 @@ bool ipc_get_workspaces(struct swaybar *bar) {
 					calloc(1, sizeof(struct swaybar_workspace));
 				ws->num = json_object_get_int(num);
 				ws->name = strdup(json_object_get_string(name));
+				ws->label = strdup(ws->name);
+				// ws->num will be -1 if workspace name doesn't begin with int.
+				if (ws->num != -1) {
+					size_t len_offset = numlen(ws->num);
+					if (bar->config->strip_workspace_name) {
+						free(ws->label);
+						ws->label = malloc(len_offset + 1 * sizeof(char));
+						ws->label[len_offset] = '\0';
+						strncpy(ws->label, ws->name, len_offset);
+					} else if (bar->config->strip_workspace_numbers) {
+						len_offset += ws->label[len_offset] == ':';
+						if (strlen(ws->name) > len_offset) {
+							free(ws->label);
+							// Strip number prefix [1-?:] using len_offset.
+							ws->label = strdup(ws->name + len_offset);
+						}
+					}
+				}
 				ws->visible = json_object_get_boolean(visible);
 				ws->focused = json_object_get_boolean(focused);
 				if (ws->focused) {
@@ -422,6 +464,27 @@ static bool handle_barconfig_update(struct swaybar *bar,
 	json_object_object_get_ex(json_config, "mode", &json_mode);
 	config->mode = strdup(json_object_get_string(json_mode));
 	wlr_log(WLR_DEBUG, "Changing bar mode to %s", config->mode);
+
+	json_object *gaps;
+	json_object_object_get_ex(json_config, "gaps", &gaps);
+	if (gaps) {
+		json_object *top = json_object_object_get(gaps, "top");
+		if (top) {
+			config->gaps.top = json_object_get_int(top);
+		}
+		json_object *right = json_object_object_get(gaps, "right");
+		if (right) {
+			config->gaps.right = json_object_get_int(right);
+		}
+		json_object *bottom = json_object_object_get(gaps, "bottom");
+		if (bottom) {
+			config->gaps.bottom = json_object_get_int(bottom);
+		}
+		json_object *left = json_object_object_get(gaps, "left");
+		if (left) {
+			config->gaps.left = json_object_get_int(left);
+		}
+	}
 
 	return determine_bar_visibility(bar, true);
 }

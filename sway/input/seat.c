@@ -1,5 +1,4 @@
-#define _XOPEN_SOURCE 700
-#define _POSIX_C_SOURCE 199309L
+#define _POSIX_C_SOURCE 200809L
 #include <assert.h>
 #include <errno.h>
 #ifdef __linux__
@@ -92,7 +91,7 @@ static void seat_send_focus(struct sway_node *node, struct sway_seat *seat) {
 		node->sway_container->view : NULL;
 
 	if (view && seat_is_input_allowed(seat, view->surface)) {
-#ifdef HAVE_XWAYLAND
+#if HAVE_XWAYLAND
 		if (view->type == SWAY_VIEW_XWAYLAND) {
 			struct wlr_xwayland *xwayland = server.xwayland.wlr_xwayland;
 			wlr_xwayland_set_seat(xwayland, seat->wlr_seat);

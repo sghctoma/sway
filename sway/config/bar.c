@@ -1,5 +1,4 @@
 #define _POSIX_C_SOURCE 200809L
-#define _XOPEN_SOURCE 700
 #include <stdio.h>
 #include <stdbool.h>
 #include <stdlib.h>
@@ -50,13 +49,10 @@ void free_bar_config(struct bar_config *bar) {
 	free(bar->font);
 	free(bar->separator_symbol);
 	for (int i = 0; i < bar->bindings->length; i++) {
-		struct bar_binding *binding = bar->bindings->items[i];
-		free_bar_binding(binding);
+		free_bar_binding(bar->bindings->items[i]);
 	}
 	list_free(bar->bindings);
-	if (bar->outputs) {
-		free_flat_list(bar->outputs);
-	}
+	list_free_items_and_destroy(bar->outputs);
 	if (bar->pid != 0) {
 		terminate_swaybar(bar->pid);
 	}
@@ -100,6 +96,7 @@ struct bar_config *default_bar_config(void) {
 	bar->wrap_scroll = false;
 	bar->separator_symbol = NULL;
 	bar->strip_workspace_numbers = false;
+	bar->strip_workspace_name = false;
 	bar->binding_mode_indicator = true;
 	bar->verbose = false;
 	bar->pid = 0;

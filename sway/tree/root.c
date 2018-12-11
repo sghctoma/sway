@@ -5,6 +5,7 @@
 #include <wlr/types/wlr_output_layout.h>
 #include "sway/desktop/transaction.h"
 #include "sway/input/seat.h"
+#include "sway/ipc-server.h"
 #include "sway/output.h"
 #include "sway/tree/arrange.h"
 #include "sway/tree/container.h"
@@ -31,7 +32,7 @@ struct sway_root *root_create(void) {
 	node_init(&root->node, N_ROOT, root);
 	root->output_layout = wlr_output_layout_create();
 	wl_list_init(&root->all_outputs);
-#ifdef HAVE_XWAYLAND
+#if HAVE_XWAYLAND
 	wl_list_init(&root->xwayland_unmanaged);
 #endif
 	wl_list_init(&root->drag_icons);
@@ -68,13 +69,18 @@ void root_scratchpad_add_container(struct sway_container *con) {
 	list_add(root->scratchpad, con);
 
 	struct sway_seat *seat = input_manager_current_seat();
+	struct sway_node *new_focus = NULL;
 	if (parent) {
 		arrange_container(parent);
-		seat_set_focus(seat, seat_get_focus_inactive(seat, &parent->node));
-	} else {
-		arrange_workspace(workspace);
-		seat_set_focus(seat, seat_get_focus_inactive(seat, &workspace->node));
+		new_focus = seat_get_focus_inactive(seat, &parent->node);
 	}
+	if (!new_focus) {
+		arrange_workspace(workspace);
+		new_focus = seat_get_focus_inactive(seat, &workspace->node);
+	}
+	seat_set_focus(seat, new_focus);
+
+	ipc_event_window(con, "move");
 }
 
 void root_scratchpad_remove_container(struct sway_container *con) {
@@ -85,45 +91,51 @@ void root_scratchpad_remove_container(struct sway_container *con) {
 	int index = list_find(root->scratchpad, con);
 	if (index != -1) {
 		list_del(root->scratchpad, index);
+		ipc_event_window(con, "move");
 	}
 }
 
 void root_scratchpad_show(struct sway_container *con) {
 	struct sway_seat *seat = input_manager_current_seat();
-	struct sway_workspace *ws = seat_get_focused_workspace(seat);
+	struct sway_workspace *new_ws = seat_get_focused_workspace(seat);
+	struct sway_workspace *old_ws = con->workspace;
 
-    // If the current con or any of its parents are in fullscreen mode, we
-    // first need to disable it before showing the scratchpad con.
-	if (ws->fullscreen) {
-		container_set_fullscreen(ws->fullscreen, false);
+	// If the current con or any of its parents are in fullscreen mode, we
+	// first need to disable it before showing the scratchpad con.
+	if (new_ws->fullscreen) {
+		container_set_fullscreen(new_ws->fullscreen, false);
 	}
 
 	// Show the container
-	if (con->workspace) {
+	if (old_ws) {
 		container_detach(con);
 	}
-	workspace_add_floating(ws, con);
+	workspace_add_floating(new_ws, con);
 
 	// Make sure the container's center point overlaps this workspace
 	double center_lx = con->x + con->width / 2;
 	double center_ly = con->y + con->height / 2;
 
 	struct wlr_box workspace_box;
-	workspace_get_box(ws, &workspace_box);
+	workspace_get_box(new_ws, &workspace_box);
 	if (!wlr_box_contains_point(&workspace_box, center_lx, center_ly)) {
 		// Maybe resize it
-		if (con->width > ws->width || con->height > ws->height) {
+		if (con->width > new_ws->width || con->height > new_ws->height) {
 			container_init_floating(con);
 		}
 
 		// Center it
-		double new_lx = ws->x + (ws->width - con->width) / 2;
-		double new_ly = ws->y + (ws->height - con->height) / 2;
+		double new_lx = new_ws->x + (new_ws->width - con->width) / 2;
+		double new_ly = new_ws->y + (new_ws->height - con->height) / 2;
 		container_floating_move_to(con, new_lx, new_ly);
 	}
 
-	arrange_workspace(ws);
+	arrange_workspace(new_ws);
 	seat_set_focus(seat, seat_get_focus_inactive(seat, &con->node));
+
+	if (new_ws != old_ws) {
+		ipc_event_window(con, "move");
+	}
 }
 
 void root_scratchpad_hide(struct sway_container *con) {
@@ -137,6 +149,8 @@ void root_scratchpad_hide(struct sway_container *con) {
 		seat_set_focus(seat, seat_get_focus_inactive(seat, &ws->node));
 	}
 	list_move_to_end(root->scratchpad, con);
+
+	ipc_event_window(con, "move");
 }
 
 struct pid_workspace {

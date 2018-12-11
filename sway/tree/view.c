@@ -8,7 +8,7 @@
 #include <wlr/types/wlr_server_decoration.h>
 #include <wlr/types/wlr_xdg_decoration_v1.h>
 #include "config.h"
-#ifdef HAVE_XWAYLAND
+#if HAVE_XWAYLAND
 #include <wlr/xwayland.h>
 #endif
 #include "list.h"
@@ -101,7 +101,7 @@ const char *view_get_instance(struct sway_view *view) {
 	}
 	return NULL;
 }
-#ifdef HAVE_XWAYLAND
+#if HAVE_XWAYLAND
 uint32_t view_get_x11_window_id(struct sway_view *view) {
 	if (view->impl->get_int_prop) {
 		return view->impl->get_int_prop(view, VIEW_PROP_X11_WINDOW_ID);
@@ -136,7 +136,7 @@ const char *view_get_shell(struct sway_view *view) {
 		return "xdg_shell_v6";
 	case SWAY_VIEW_XDG_SHELL:
 		return "xdg_shell";
-#ifdef HAVE_XWAYLAND
+#if HAVE_XWAYLAND
 	case SWAY_VIEW_XWAYLAND:
 		return "xwayland";
 #endif
@@ -196,22 +196,22 @@ static bool gaps_to_edge(struct sway_view *view) {
 }
 
 void view_autoconfigure(struct sway_view *view) {
-	if (!view->container->workspace) {
+	struct sway_container *con = view->container;
+	if (!con->workspace) {
 		// Hidden in the scratchpad
 		return;
 	}
-	struct sway_output *output = view->container->workspace->output;
+	struct sway_output *output = con->workspace->output;
 
-	if (view->container->is_fullscreen) {
-		view->x = output->lx;
-		view->y = output->ly;
-		view->width = output->width;
-		view->height = output->height;
+	if (con->is_fullscreen) {
+		con->content_x = output->lx;
+		con->content_y = output->ly;
+		con->content_width = output->width;
+		con->content_height = output->height;
 		return;
 	}
 
 	struct sway_workspace *ws = view->container->workspace;
-	struct sway_container *con = view->container;
 
 	bool smart = config->hide_edge_borders == E_SMART ||
 		config->hide_edge_borders == E_SMART_NO_GAPS;
@@ -289,10 +289,10 @@ void view_autoconfigure(struct sway_view *view) {
 		break;
 	}
 
-	view->x = x;
-	view->y = y;
-	view->width = width;
-	view->height = height;
+	con->content_x = x;
+	con->content_y = y;
+	con->content_width = width;
+	con->content_height = height;
 }
 
 void view_set_activated(struct sway_view *view, bool activated) {
@@ -437,9 +437,14 @@ void view_execute_criteria(struct sway_view *view) {
 		wlr_log(WLR_DEBUG, "for_window '%s' matches view %p, cmd: '%s'",
 				criteria->raw, view, criteria->cmdlist);
 		list_add(view->executed_criteria, criteria);
-		struct cmd_results *res = execute_command(
+		list_t *res_list = execute_command(
 				criteria->cmdlist, NULL, view->container);
-		free_cmd_results(res);
+		while (res_list->length) {
+			struct cmd_results *res = res_list->items[0];
+			free_cmd_results(res);
+			list_del(res_list, 0);
+		}
+		list_free(res_list);
 	}
 	list_free(criterias);
 }
@@ -484,7 +489,7 @@ static struct sway_workspace *select_workspace(struct sway_view *view) {
 
 	// Check if there's a PID mapping
 	pid_t pid;
-#ifdef HAVE_XWAYLAND
+#if HAVE_XWAYLAND
 	if (view->type == SWAY_VIEW_XWAYLAND) {
 		struct wlr_xwayland_surface *surf =
 			wlr_xwayland_surface_from_wlr_surface(view->surface);
@@ -667,12 +672,14 @@ void view_update_size(struct sway_view *view, int width, int height) {
 				"Expected a floating container")) {
 		return;
 	}
-	view->width = width;
-	view->height = height;
-	view->container->current.view_width = width;
-	view->container->current.view_height = height;
-	container_set_geometry_from_floating_view(view->container);
+	view->container->content_width = width;
+	view->container->content_height = height;
+	view->container->current.content_width = width;
+	view->container->current.content_height = height;
+	container_set_geometry_from_content(view->container);
 }
+
+static const struct sway_view_child_impl subsurface_impl;
 
 static void subsurface_get_root_coords(struct sway_view_child *child,
 		int *root_sx, int *root_sy) {
@@ -689,25 +696,55 @@ static void subsurface_get_root_coords(struct sway_view_child *child,
 	}
 }
 
+static void subsurface_destroy(struct sway_view_child *child) {
+	if (!sway_assert(child->impl == &subsurface_impl,
+			"Expected a subsurface")) {
+		return;
+	}
+	struct sway_subsurface *subsurface = (struct sway_subsurface *)child;
+	wl_list_remove(&subsurface->destroy.link);
+	free(subsurface);
+}
+
 static const struct sway_view_child_impl subsurface_impl = {
 	.get_root_coords = subsurface_get_root_coords,
+	.destroy = subsurface_destroy,
 };
 
+static void subsurface_handle_destroy(struct wl_listener *listener,
+		void *data) {
+	struct sway_subsurface *subsurface =
+		wl_container_of(listener, subsurface, destroy);
+	struct sway_view_child *child = &subsurface->child;
+	view_child_destroy(child);
+}
+
+static void view_child_damage(struct sway_view_child *child, bool whole);
+
 static void view_subsurface_create(struct sway_view *view,
-		struct wlr_subsurface *subsurface) {
-	struct sway_view_child *child = calloc(1, sizeof(struct sway_view_child));
-	if (child == NULL) {
+		struct wlr_subsurface *wlr_subsurface) {
+	struct sway_subsurface *subsurface =
+		calloc(1, sizeof(struct sway_subsurface));
+	if (subsurface == NULL) {
 		wlr_log(WLR_ERROR, "Allocation failed");
 		return;
 	}
-	view_child_init(child, &subsurface_impl, view, subsurface->surface);
+	view_child_init(&subsurface->child, &subsurface_impl, view,
+		wlr_subsurface->surface);
+
+	wl_signal_add(&wlr_subsurface->events.destroy, &subsurface->destroy);
+	subsurface->destroy.notify = subsurface_handle_destroy;
+
+	subsurface->child.mapped = true;
+	view_child_damage(&subsurface->child, true);
 }
 
 static void view_child_damage(struct sway_view_child *child, bool whole) {
 	int sx, sy;
 	child->impl->get_root_coords(child, &sx, &sy);
 	desktop_damage_surface(child->surface,
-			child->view->x + sx, child->view->y + sy, whole);
+			child->view->container->content_x + sx,
+			child->view->container->content_y + sy, whole);
 }
 
 static void view_child_handle_surface_commit(struct wl_listener *listener,
@@ -744,6 +781,7 @@ static void view_child_handle_surface_map(struct wl_listener *listener,
 		void *data) {
 	struct sway_view_child *child =
 		wl_container_of(listener, child, surface_map);
+	child->mapped = true;
 	view_child_damage(child, true);
 }
 
@@ -752,6 +790,7 @@ static void view_child_handle_surface_unmap(struct wl_listener *listener,
 	struct sway_view_child *child =
 		wl_container_of(listener, child, surface_unmap);
 	view_child_damage(child, true);
+	child->mapped = false;
 }
 
 void view_child_init(struct sway_view_child *child,
@@ -770,6 +809,7 @@ void view_child_init(struct sway_view_child *child,
 	wl_signal_add(&surface->events.destroy, &child->surface_destroy);
 	child->surface_destroy.notify = view_child_handle_surface_destroy;
 
+	// Not all child views have a map/unmap event
 	child->surface_map.notify = view_child_handle_surface_map;
 	child->surface_unmap.notify = view_child_handle_surface_unmap;
 
@@ -780,6 +820,10 @@ void view_child_init(struct sway_view_child *child,
 }
 
 void view_child_destroy(struct sway_view_child *child) {
+	if (child->mapped && child->view->container != NULL) {
+		view_child_damage(child, true);
+	}
+
 	wl_list_remove(&child->surface_commit.link);
 	wl_list_remove(&child->surface_destroy.link);
 
@@ -801,7 +845,7 @@ struct sway_view *view_from_wlr_surface(struct wlr_surface *wlr_surface) {
 			wlr_xdg_surface_v6_from_wlr_surface(wlr_surface);
 		return view_from_wlr_xdg_surface_v6(xdg_surface_v6);
 	}
-#ifdef HAVE_XWAYLAND
+#if HAVE_XWAYLAND
 	if (wlr_surface_is_xwayland_surface(wlr_surface)) {
 		struct wlr_xwayland_surface *xsurface =
 			wlr_xwayland_surface_from_wlr_surface(wlr_surface);
@@ -823,12 +867,29 @@ struct sway_view *view_from_wlr_surface(struct wlr_surface *wlr_surface) {
 	return NULL;
 }
 
+static char *escape_pango_markup(const char *buffer) {
+	size_t length = escape_markup_text(buffer, NULL);
+	char *escaped_title = calloc(length + 1, sizeof(char));
+	escape_markup_text(buffer, escaped_title);
+	return escaped_title;
+}
+
 static size_t append_prop(char *buffer, const char *value) {
 	if (!value) {
 		return 0;
 	}
-	lenient_strcat(buffer, value);
-	return strlen(value);
+	// If using pango_markup in font, we need to escape all markup chars
+	// from values to make sure tags are not inserted by clients
+	if (config->pango_markup) {
+		char *escaped_value = escape_pango_markup(value);
+		lenient_strcat(buffer, escaped_value);
+		size_t len = strlen(escaped_value);
+		free(escaped_value);
+		return len;
+	} else {
+		lenient_strcat(buffer, value);
+		return strlen(value);
+	}
 }
 
 /**
@@ -837,11 +898,7 @@ static size_t append_prop(char *buffer, const char *value) {
  */
 static size_t parse_title_format(struct sway_view *view, char *buffer) {
 	if (!view->title_format || strcmp(view->title_format, "%title") == 0) {
-		const char *title = view_get_title(view);
-		if (buffer && title) {
-			strcpy(buffer, title);
-		}
-		return title ? strlen(title) : 0;
+		return append_prop(buffer, view_get_title(view));
 	}
 
 	size_t len = 0;
@@ -881,14 +938,6 @@ static size_t parse_title_format(struct sway_view *view, char *buffer) {
 	return len;
 }
 
-static char *escape_title(char *buffer) {
-	size_t length = escape_markup_text(buffer, NULL);
-	char *escaped_title = calloc(length + 1, sizeof(char));
-	escape_markup_text(buffer, escaped_title);
-	free(buffer);
-	return escaped_title;
-}
-
 void view_update_title(struct sway_view *view, bool force) {
 	const char *title = view_get_title(view);
 
@@ -911,10 +960,6 @@ void view_update_title(struct sway_view *view, bool force) {
 			return;
 		}
 		parse_title_format(view, buffer);
-		// now we have the title, but needs to be escaped when using pango markup
-		if (config->pango_markup) {
-			buffer = escape_title(buffer);
-		}
 
 		view->container->title = strdup(title);
 		view->container->formatted_title = buffer;

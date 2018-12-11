@@ -1,4 +1,4 @@
-#define _XOPEN_SOURCE 500
+#define _POSIX_C_SOURCE 200809L
 #ifdef __linux__
 #include <linux/input-event-codes.h>
 #elif __FreeBSD__
@@ -23,9 +23,7 @@ void free_sway_binding(struct sway_binding *binding) {
 		return;
 	}
 
-	if (binding->keys) {
-		free_flat_list(binding->keys);
-	}
+	list_free_items_and_destroy(binding->keys);
 	free(binding->input);
 	free(binding->command);
 	free(binding);
@@ -79,7 +77,6 @@ static int key_qsort_cmp(const void *keyp_a, const void *keyp_b) {
 	uint32_t key_b = **(uint32_t **)keyp_b;
 	return (key_a < key_b) ? -1 : ((key_a > key_b) ? 1 : 0);
 }
-
 
 /**
  * From a keycode, bindcode, or bindsym name and the most likely binding type,
@@ -161,6 +158,7 @@ static struct cmd_results *cmd_bindsym_or_bindcode(int argc, char **argv,
 	binding->type = bindcode ? BINDING_KEYCODE : BINDING_KEYSYM;
 
 	bool exclude_titlebar = false;
+	bool warn = true;
 
 	// Handle --release and --locked
 	while (argc > 0) {
@@ -178,6 +176,8 @@ static struct cmd_results *cmd_bindsym_or_bindcode(int argc, char **argv,
 					strlen("--input-device=")) == 0) {
 			free(binding->input);
 			binding->input = strdup(argv[0] + strlen("--input-device="));
+		} else if (strcmp("--no-warn", argv[0]) == 0) {
+			warn = false;
 		} else {
 			break;
 		}
@@ -220,14 +220,14 @@ static struct cmd_results *cmd_bindsym_or_bindcode(int argc, char **argv,
 		uint32_t *key = calloc(1, sizeof(uint32_t));
 		if (!key) {
 			free_sway_binding(binding);
-			free_flat_list(split);
+			list_free_items_and_destroy(split);
 			return cmd_results_new(CMD_FAILURE, bindtype,
 					"Unable to allocate binding key");
 		}
 		*key = key_val;
 		list_add(binding->keys, key);
 	}
-	free_flat_list(split);
+	list_free_items_and_destroy(split);
 	binding->order = binding_order++;
 
 	// refine region of interest for mouse binding once we are certain
@@ -255,8 +255,15 @@ static struct cmd_results *cmd_bindsym_or_bindcode(int argc, char **argv,
 	for (int i = 0; i < mode_bindings->length; ++i) {
 		struct sway_binding *config_binding = mode_bindings->items[i];
 		if (binding_key_compare(binding, config_binding)) {
-			wlr_log(WLR_DEBUG, "overwriting old binding with command '%s'",
-				config_binding->command);
+			wlr_log(WLR_INFO, "Overwriting binding '%s' for device '%s' "
+					"from `%s` to `%s`", argv[0], binding->input,
+					binding->command, config_binding->command);
+			if (warn) {
+				config_add_swaynag_warning("Overwriting binding"
+					"'%s' for device '%s' to `%s` from `%s`",
+					argv[0], binding->input, binding->command,
+					config_binding->command);
+			}
 			free_sway_binding(config_binding);
 			mode_bindings->items[i] = binding;
 			overwritten = true;
@@ -270,7 +277,6 @@ static struct cmd_results *cmd_bindsym_or_bindcode(int argc, char **argv,
 	wlr_log(WLR_DEBUG, "%s - Bound %s to command `%s` for device '%s'",
 		bindtype, argv[0], binding->command, binding->input);
 	return cmd_results_new(CMD_SUCCESS, NULL, NULL);
-
 }
 
 struct cmd_results *cmd_bindsym(int argc, char **argv) {
@@ -281,7 +287,6 @@ struct cmd_results *cmd_bindcode(int argc, char **argv) {
 	return cmd_bindsym_or_bindcode(argc, argv, true);
 }
 
-
 /**
  * Execute the command associated to a binding
  */
@@ -289,13 +294,19 @@ void seat_execute_command(struct sway_seat *seat, struct sway_binding *binding) 
 	wlr_log(WLR_DEBUG, "running command for binding: %s", binding->command);
 
 	config->handler_context.seat = seat;
-	struct cmd_results *results = execute_command(binding->command, NULL, NULL);
-	if (results->status == CMD_SUCCESS) {
-		ipc_event_binding(binding);
-	} else {
-		wlr_log(WLR_DEBUG, "could not run command for binding: %s (%s)",
-			binding->command, results->error);
+	list_t *res_list = execute_command(binding->command, NULL, NULL);
+	bool success = true;
+	for (int i = 0; i < res_list->length; ++i) {
+		struct cmd_results *results = res_list->items[i];
+		if (results->status != CMD_SUCCESS) {
+			wlr_log(WLR_DEBUG, "could not run command for binding: %s (%s)",
+				binding->command, results->error);
+			success = false;
+		}
+		free_cmd_results(results);
 	}
-
-	free_cmd_results(results);
+	list_free(res_list);
+	if (success) {
+		ipc_event_binding(binding);
+	}
 }
