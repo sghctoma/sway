@@ -1,6 +1,7 @@
 #include <json-c/json.h>
 #include <stdio.h>
 #include <ctype.h>
+#include "config.h"
 #include "log.h"
 #include "sway/config.h"
 #include "sway/ipc-json.h"
@@ -93,6 +94,8 @@ static const char *ipc_json_device_type_description(struct sway_input_device *de
 		return "tablet_tool";
 	case WLR_INPUT_DEVICE_TABLET_PAD:
 		return "tablet_pad";
+	case WLR_INPUT_DEVICE_SWITCH:
+		return "switch";
 	}
 	return "unknown";
 }
@@ -419,6 +422,7 @@ static void ipc_json_describe_container(struct sway_container *c, json_object *o
 		view_is_urgent(c->view) : container_has_urgent_child(c);
 	json_object_object_add(object, "urgent", json_object_new_boolean(urgent));
 	json_object_object_add(object, "sticky", json_object_new_boolean(c->is_sticky));
+	json_object_object_add(object, "fullscreen_mode", json_object_new_int(c->is_fullscreen));
 
 	struct sway_node *parent = node_get_parent(&c->node);
 	struct wlr_box parent_box = {0, 0, 0, 0};
@@ -782,5 +786,41 @@ json_object *ipc_json_describe_bar_config(struct bar_config *bar) {
 		}
 		json_object_object_add(json, "outputs", outputs);
 	}
+#if HAVE_TRAY
+	// Add tray outputs if defined
+	if (bar->tray_outputs && bar->tray_outputs->length > 0) {
+		json_object *tray_outputs = json_object_new_array();
+		for (int i = 0; i < bar->tray_outputs->length; ++i) {
+			const char *name = bar->tray_outputs->items[i];
+			json_object_array_add(tray_outputs, json_object_new_string(name));
+		}
+		json_object_object_add(json, "tray_outputs", tray_outputs);
+	}
+
+	json_object *tray_bindings = json_object_new_array();
+	for (int i = 0; i < 10; ++i) {
+		if (bar->tray_bindings[i]) {
+			json_object *bind = json_object_new_object();
+			json_object_object_add(bind, "input_code",
+					json_object_new_int(i));
+			json_object_object_add(bind, "command",
+					json_object_new_string(bar->tray_bindings[i]));
+			json_object_array_add(tray_bindings, bind);
+		}
+	}
+	if (json_object_array_length(tray_bindings) > 0) {
+		json_object_object_add(json, "tray_bindings", tray_bindings);
+	} else {
+		json_object_put(tray_bindings);
+	}
+
+	if (bar->icon_theme) {
+		json_object_object_add(json, "icon_theme",
+				json_object_new_string(bar->icon_theme));
+	}
+
+	json_object_object_add(json, "tray_padding",
+			json_object_new_int(bar->tray_padding));
+#endif
 	return json;
 }

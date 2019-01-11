@@ -1,11 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
 #include <assert.h>
 #include <errno.h>
-#ifdef __linux__
 #include <linux/input-event-codes.h>
-#elif __FreeBSD__
-#include <dev/evdev/input-event-codes.h>
-#endif
 #include <strings.h>
 #include <time.h>
 #include <wlr/types/wlr_cursor.h>
@@ -172,6 +168,12 @@ static void handle_seat_node_destroy(struct wl_listener *listener, void *data) {
 		}
 
 		parent = node_get_parent(parent);
+	}
+
+	if (next_focus->type == N_WORKSPACE &&
+			!workspace_is_visible(next_focus->sway_workspace)) {
+		// Do not change focus to a non-visible workspace
+		return;
 	}
 
 	if (needs_new_focus) {
@@ -386,6 +388,7 @@ static void seat_update_capabilities(struct sway_seat *seat) {
 			caps |= WL_SEAT_CAPABILITY_POINTER;
 			break;
 		case WLR_INPUT_DEVICE_TABLET_PAD:
+		case WLR_INPUT_DEVICE_SWITCH:
 			break;
 		}
 	}
@@ -421,7 +424,13 @@ static void seat_apply_input_config(struct sway_seat *seat,
 	if (mapped_to_output != NULL) {
 		wlr_log(WLR_DEBUG, "Mapping input device %s to output %s",
 			sway_device->input_device->identifier, mapped_to_output);
-		struct sway_output *output = output_by_name(mapped_to_output);
+		if (strcmp("*", mapped_to_output) == 0) {
+			wlr_cursor_map_input_to_output(seat->cursor->cursor,
+				sway_device->input_device->wlr_device, NULL);
+			wlr_log(WLR_DEBUG, "Reset output mapping");
+			return;
+		}
+		struct sway_output *output = output_by_name_or_id(mapped_to_output);
 		if (output) {
 			wlr_cursor_map_input_to_output(seat->cursor->cursor,
 				sway_device->input_device->wlr_device, output->wlr_output);
@@ -506,6 +515,9 @@ void seat_configure_device(struct sway_seat *seat,
 			break;
 		case WLR_INPUT_DEVICE_TABLET_PAD:
 			wlr_log(WLR_DEBUG, "TODO: configure tablet pad");
+			break;
+		case WLR_INPUT_DEVICE_SWITCH:
+			wlr_log(WLR_DEBUG, "TODO: configure switch device");
 			break;
 	}
 }
@@ -985,6 +997,8 @@ void seat_apply_config(struct sway_seat *seat,
 	wl_list_for_each(seat_device, &seat->devices, link) {
 		seat_configure_device(seat, seat_device->input_device);
 	}
+
+	cursor_handle_activity(seat->cursor);
 }
 
 struct seat_config *seat_get_config(struct sway_seat *seat) {
@@ -992,6 +1006,18 @@ struct seat_config *seat_get_config(struct sway_seat *seat) {
 	for (int i = 0; i < config->seat_configs->length; ++i ) {
 		seat_config = config->seat_configs->items[i];
 		if (strcmp(seat->wlr_seat->name, seat_config->name) == 0) {
+			return seat_config;
+		}
+	}
+
+	return NULL;
+}
+
+struct seat_config *seat_get_config_by_name(const char *name) {
+	struct seat_config *seat_config = NULL;
+	for (int i = 0; i < config->seat_configs->length; ++i ) {
+		seat_config = config->seat_configs->items[i];
+		if (strcmp(name, seat_config->name) == 0) {
 			return seat_config;
 		}
 	}
@@ -1026,6 +1052,17 @@ void seat_begin_move_floating(struct sway_seat *seat,
 	container_raise_floating(con);
 
 	cursor_set_image(seat->cursor, "grab", NULL);
+}
+
+void seat_begin_move_tiling_threshold(struct sway_seat *seat,
+		struct sway_container *con, uint32_t button) {
+	seat->operation = OP_MOVE_TILING_THRESHOLD;
+	seat->op_container = con;
+	seat->op_button = button;
+	seat->op_target_node = NULL;
+	seat->op_target_edge = 0;
+	seat->op_ref_lx = seat->cursor->cursor->x;
+	seat->op_ref_ly = seat->cursor->cursor->y;
 }
 
 void seat_begin_move_tiling(struct sway_seat *seat,
@@ -1195,5 +1232,9 @@ void seat_consider_warp_to_focus(struct sway_seat *seat) {
 		cursor_warp_to_container(seat->cursor, focus->sway_container);
 	} else {
 		cursor_warp_to_workspace(seat->cursor, focus->sway_workspace);
+	}
+	if (seat->cursor->hidden){
+		cursor_unhide(seat->cursor);
+		wl_event_source_timer_update(seat->cursor->hide_source, cursor_get_timeout(seat->cursor));
 	}
 }

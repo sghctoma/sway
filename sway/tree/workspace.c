@@ -35,10 +35,8 @@ struct sway_output *workspace_get_initial_output(const char *name) {
 	struct workspace_config *wsc = workspace_find_config(name);
 	if (wsc) {
 		for (int i = 0; i < wsc->outputs->length; i++) {
-			struct sway_output *output = output_by_name(wsc->outputs->items[i]);
-			if (!output) {
-				output = output_by_identifier(wsc->outputs->items[i]);
-			}
+			struct sway_output *output =
+				output_by_name_or_id(wsc->outputs->items[i]);
 			if (output) {
 				return output;
 			}
@@ -113,7 +111,10 @@ struct sway_workspace *workspace_create(struct sway_output *output,
 
 			// Add output priorities
 			for (int i = 0; i < wsc->outputs->length; ++i) {
-				list_add(ws->output_priority, strdup(wsc->outputs->items[i]));
+				char *name = wsc->outputs->items[i];
+				if (strcmp(name, "*") != 0) {
+					list_add(ws->output_priority, strdup(name));
+				}
 			}
 		}
 	}
@@ -182,7 +183,11 @@ static bool workspace_valid_on_output(const char *output_name,
 		const char *ws_name) {
 	struct workspace_config *wsc = workspace_find_config(ws_name);
 	char identifier[128];
-	struct sway_output *output = output_by_name(output_name);
+	struct sway_output *output = output_by_name_or_id(output_name);
+	if (!output) {
+		return false;
+	}
+	output_name = output->wlr_output->name;
 	output_get_identifier(identifier, sizeof(identifier), output);
 
 	if (!wsc) {
@@ -190,7 +195,8 @@ static bool workspace_valid_on_output(const char *output_name,
 	}
 
 	for (int i = 0; i < wsc->outputs->length; i++) {
-		if (strcmp(wsc->outputs->items[i], output_name) == 0 ||
+		if (strcmp(wsc->outputs->items[i], "*") == 0 ||
+				strcmp(wsc->outputs->items[i], output_name) == 0 ||
 				strcmp(wsc->outputs->items[i], identifier) == 0) {
 			return true;
 		}
@@ -286,6 +292,14 @@ char *workspace_next_name(const char *output_name) {
 	// assignments primarily, falling back to bindings and numbers.
 	struct sway_mode *mode = config->current_mode;
 
+	char identifier[128];
+	struct sway_output *output = output_by_name_or_id(output_name);
+	if (!output) {
+		return NULL;
+	}
+	output_name = output->wlr_output->name;
+	output_get_identifier(identifier, sizeof(identifier), output);
+
 	int order = INT_MAX;
 	char *target = NULL;
 	for (int i = 0; i < mode->keysym_bindings->length; ++i) {
@@ -304,7 +318,9 @@ char *workspace_next_name(const char *output_name) {
 		}
 		bool found = false;
 		for (int j = 0; j < wsc->outputs->length; ++j) {
-			if (strcmp(wsc->outputs->items[j], output_name) == 0) {
+			if (strcmp(wsc->outputs->items[j], "*") == 0 ||
+					strcmp(wsc->outputs->items[j], output_name) == 0 ||
+					strcmp(wsc->outputs->items[j], identifier) == 0) {
 				found = true;
 				free(target);
 				target = strdup(wsc->workspace);
@@ -525,13 +541,19 @@ void workspace_output_add_priority(struct sway_workspace *workspace,
 
 struct sway_output *workspace_output_get_highest_available(
 		struct sway_workspace *ws, struct sway_output *exclude) {
+	char exclude_id[128] = {'\0'};
+	if (exclude) {
+		output_get_identifier(exclude_id, sizeof(exclude_id), exclude);
+	}
+
 	for (int i = 0; i < ws->output_priority->length; i++) {
 		char *name = ws->output_priority->items[i];
-		if (exclude && strcasecmp(name, exclude->wlr_output->name) == 0) {
+		if (exclude && (strcmp(name, exclude->wlr_output->name) == 0
+					|| strcmp(name, exclude_id) == 0)) {
 			continue;
 		}
 
-		struct sway_output *output = output_by_name(name);
+		struct sway_output *output = output_by_name_or_id(name);
 		if (output) {
 			return output;
 		}

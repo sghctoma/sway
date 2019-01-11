@@ -42,21 +42,6 @@ struct cmd_results *checkarg(int argc, const char *name, enum expected_args type
 		: NULL;
 }
 
-void apply_seat_config(struct seat_config *seat_config) {
-	int i = list_seq_find(config->seat_configs, seat_name_cmp, seat_config->name);
-	if (i >= 0) {
-		// merge existing config
-		struct seat_config *sc = config->seat_configs->items[i];
-		merge_seat_config(sc, seat_config);
-		free_seat_config(seat_config);
-		seat_config = sc;
-	} else {
-		list_add(config->seat_configs, seat_config);
-	}
-
-	input_manager_apply_seat_config(seat_config);
-}
-
 /* Keep alphabetized */
 static struct cmd_handler handlers[] = {
 	{ "assign", cmd_assign },
@@ -102,6 +87,7 @@ static struct cmd_handler handlers[] = {
 	{ "smart_borders", cmd_smart_borders },
 	{ "smart_gaps", cmd_smart_gaps },
 	{ "tiling_drag", cmd_tiling_drag },
+	{ "tiling_drag_threshold", cmd_tiling_drag_threshold },
 	{ "title_align", cmd_title_align },
 	{ "titlebar_border_thickness", cmd_titlebar_border_thickness },
 	{ "titlebar_padding", cmd_titlebar_padding },
@@ -251,15 +237,15 @@ list_t *execute_command(char *_exec, struct sway_seat *seat,
 			criteria_destroy(criteria);
 			config->handler_context.using_criteria = true;
 			// Skip leading whitespace
-			head += strspn(head, whitespace);
+			for (; isspace(*head); ++head) {}
 		}
 		// Split command list
 		cmdlist = argsep(&head, ";");
-		cmdlist += strspn(cmdlist, whitespace);
+		for (; isspace(*cmdlist); ++cmdlist) {}
 		do {
 			// Split commands
 			cmd = argsep(&cmdlist, ",");
-			cmd += strspn(cmd, whitespace);
+			for (; isspace(*cmd); ++cmd) {}
 			if (strcmp(cmd, "") == 0) {
 				wlr_log(WLR_INFO, "Ignoring empty command.");
 				continue;

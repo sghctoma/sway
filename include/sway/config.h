@@ -6,6 +6,7 @@
 #include <time.h>
 #include <wlr/types/wlr_box.h>
 #include <xkbcommon/xkbcommon.h>
+#include "../include/config.h"
 #include "list.h"
 #include "swaynag.h"
 #include "tree/container.h"
@@ -26,7 +27,8 @@ struct sway_variable {
 enum binding_input_type {
 	BINDING_KEYCODE,
 	BINDING_KEYSYM,
-	BINDING_MOUSE,
+	BINDING_MOUSECODE,
+	BINDING_MOUSESYM,
 };
 
 enum binding_flags {
@@ -140,6 +142,7 @@ struct seat_config {
 	char *name;
 	int fallback; // -1 means not set
 	list_t *attachments; // list of seat_attachment configs
+	int hide_cursor_timeout;
 };
 
 enum config_dpms {
@@ -252,6 +255,13 @@ struct bar_config {
 		char *binding_mode_bg;
 		char *binding_mode_text;
 	} colors;
+
+#if HAVE_TRAY
+	char *icon_theme;
+	const char *tray_bindings[10]; // mouse buttons 0-9
+	list_t *tray_outputs; // char *
+	int tray_padding;
+#endif
 };
 
 struct bar_binding {
@@ -417,7 +427,9 @@ struct sway_config {
 	bool auto_back_and_forth;
 	bool show_marks;
 	enum alignment title_align;
+
 	bool tiling_drag;
+	int tiling_drag_threshold;
 
 	bool smart_gaps;
 	int gaps_inner;
@@ -534,7 +546,7 @@ struct seat_attachment_config *seat_attachment_config_new(void);
 struct seat_attachment_config *seat_config_get_attachment(
 		struct seat_config *seat_config, char *identifier);
 
-void apply_seat_config(struct seat_config *seat);
+struct seat_config *store_seat_config(struct seat_config *seat);
 
 int output_name_cmp(const void *item, const void *data);
 
@@ -552,8 +564,6 @@ struct output_config *store_output_config(struct output_config *oc);
 void apply_output_config_to_outputs(struct output_config *oc);
 
 void free_output_config(struct output_config *oc);
-
-void create_default_output_configs(void);
 
 int workspace_output_cmp_workspace(const void *a, const void *b);
 

@@ -288,6 +288,13 @@ runtime.
 	overwrite a binding, swaynag will give you a warning. To silence this, use
 	the _--no-warn_ flag.
 
+	Mouse buttons can either be specified in the form _button[1-9]_ or by using
+	the name of the event code (ex _BTN\_LEFT_ or _BTN\_RIGHT_). For the former
+	option, the buttons will be mapped to their values in X11 (1=left, 2=middle,
+	3=right, 4=scroll up, 5=scroll down, 6=scroll left, 7=scroll right, 8=back,
+	9=forward). For the latter option, you can find the event names using
+	_libinput debug-events_.
+
 	Example:
 ```
 		# Execute firefox when alt, shift, and f are pressed together
@@ -295,7 +302,7 @@ runtime.
 ```
 
 	*bindcode* [--release|--locked] [--input-device=<device>] [--no-warn] <code> <command>
-	is also available for binding with key codes instead of key names.
+	is also available for binding with key/button codes instead of key/button names.
 
 *client.<class>* <border> <background> <text> <indicator> <child\_border>
 	Configures the color of window borders and title bars. All 5 colors are
@@ -320,7 +327,8 @@ runtime.
 		A view that does not have focus.
 
 	*client.urgent*
-		A view with an urgency hint. *Note*: This is not currently implemented.
+		A view with an urgency hint. *Note*: Native Wayland windows do not
+		support urgency. Urgency only works for Xwayland windows.
 
 	The meaning of each color is:
 
@@ -424,7 +432,7 @@ The default colors are:
 
 *focus\_follows\_mouse* yes|no|always
 	If set to _yes_, moving your mouse over a window will focus that window. If
-	set to _always_, the window under the cursor will always be focused, even 
+	set to _always_, the window under the cursor will always be focused, even
 	after switching between workspaces.
 
 *focus\_wrapping* yes|no|force
@@ -443,11 +451,11 @@ The default colors are:
 	Thickness of the titlebar border in pixels
 
 *titlebar\_padding* <horizontal> [<vertical>]
-	Padding of the text in the titlebar. _horizontal_ value affects horizontal 
-	padding of the text while _vertical_ value affects vertical padding (space 
-	above and below text). Padding includes titlebar borders so their value 
+	Padding of the text in the titlebar. _horizontal_ value affects horizontal
+	padding of the text while _vertical_ value affects vertical padding (space
+	above and below text). Padding includes titlebar borders so their value
 	should be greater than titlebar\_border\_thickness. If _vertical_ value is
-	not specified it is set to the _horizontal_ value. 
+	not specified it is set to the _horizontal_ value.
 
 *for\_window* <criteria> <command>
 	Whenever a window that matches _criteria_ appears, run list of commands.
@@ -557,6 +565,21 @@ The default colors are:
 *opacity* <value>
 	Set the opacity of the window between 0 (completely transparent) and 1
 	(completely opaque).
+
+*tiling\_drag*  enable|disable|toggle
+	Sets whether or not tiling containers can be dragged with the mouse. If
+	enabled (default), the _floating\_mod_ can be used to drag tiling, as well
+	as floating, containers. Using the left mouse button on title bars without
+	the _floating\_mod_ will also allow the container to be dragged. _toggle_
+	should not be used in the config file.
+
+*tiling\_drag\_threshold* <threshold>
+	Sets the threshold that must be exceeded for a container to be dragged by
+	its titlebar. This has no effect if _floating\_mod_ is used or if
+	_tiling\_drag_ is set to _disable_.  Once the threshold has been exceeded
+	once, the drag starts and the cursor can come back inside the threshold
+	without stopping the drag.  _threshold_ is multiplied by the scale of the
+	output that the cursor on.  The default is 9.
 
 *title\_align* left|center|right
 	Sets the title alignment. If _right_ is selected and _show\_marks_ is set

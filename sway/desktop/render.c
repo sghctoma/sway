@@ -73,7 +73,7 @@ static void scissor_output(struct wlr_output *wlr_output,
 
 	enum wl_output_transform transform =
 		wlr_output_transform_invert(wlr_output->transform);
-	wlr_box_transform(&box, transform, ow, oh, &box);
+	wlr_box_transform(&box, &box, transform, ow, oh);
 
 	wlr_renderer_scissor(renderer, &box);
 }
@@ -261,7 +261,7 @@ static void render_saved_view(struct sway_view *view,
 	};
 
 	struct wlr_box intersection;
-	bool intersects = wlr_box_intersection(&output_box, &box, &intersection);
+	bool intersects = wlr_box_intersection(&intersection, &output_box, &box);
 	if (!intersects) {
 		return;
 	}
@@ -1017,7 +1017,7 @@ void output_render(struct sway_output *output, struct timespec *when,
 		if (fullscreen_con->view) {
 			if (fullscreen_con->view->saved_buffer) {
 				render_saved_view(fullscreen_con->view, output, damage, 1.0f);
-			} else {
+			} else if (fullscreen_con->view->surface) {
 				render_view_toplevels(fullscreen_con->view,
 						output, damage, 1.0f);
 			}

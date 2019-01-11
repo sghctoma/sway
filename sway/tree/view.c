@@ -459,7 +459,7 @@ static struct sway_workspace *select_workspace(struct sway_view *view) {
 	for (int i = 0; i < criterias->length; ++i) {
 		struct criteria *criteria = criterias->items[i];
 		if (criteria->type == CT_ASSIGN_OUTPUT) {
-			struct sway_output *output = output_by_name(criteria->target);
+			struct sway_output *output = output_by_name_or_id(criteria->target);
 			if (output) {
 				ws = output_get_active_workspace(output);
 				break;
@@ -605,7 +605,6 @@ void view_map(struct sway_view *view, struct wlr_surface *wlr_surface,
 
 	view_update_title(view, false);
 	container_update_representation(view->container);
-	view_execute_criteria(view);
 
 	if (decoration) {
 		view_update_csd_from_client(view, decoration);
@@ -621,6 +620,8 @@ void view_map(struct sway_view *view, struct wlr_surface *wlr_surface,
 			arrange_workspace(view->container->workspace);
 		}
 	}
+
+	view_execute_criteria(view);
 
 	if (should_focus(view)) {
 		input_manager_set_focus(&view->container->node);
@@ -653,14 +654,8 @@ void view_unmap(struct sway_view *view) {
 
 	struct sway_seat *seat;
 	wl_list_for_each(seat, &server.input->seats, link) {
-		if (config->mouse_warping == WARP_CONTAINER) {
-			struct sway_node *node = seat_get_focus(seat);
-			if (node && node->type == N_CONTAINER) {
-				cursor_warp_to_container(seat->cursor, node->sway_container);
-			} else if (node && node->type == N_WORKSPACE) {
-				cursor_warp_to_workspace(seat->cursor, node->sway_workspace);
-			}
-		}
+		seat->cursor->image_surface = NULL;
+		seat_consider_warp_to_focus(seat);
 	}
 
 	transaction_commit_dirty();

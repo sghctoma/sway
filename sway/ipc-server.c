@@ -1,10 +1,6 @@
 // See https://i3wm.org/docs/ipc.html for protocol information
 #define _POSIX_C_SOURCE 200112L
-#ifdef __linux__
 #include <linux/input-event-codes.h>
-#elif __FreeBSD__
-#include <dev/evdev/input-event-codes.h>
-#endif
 #include <assert.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -449,8 +445,12 @@ void ipc_event_binding(struct sway_binding *binding) {
 	json_object_object_add(json_binding, "input_code", json_object_new_int(input_code));
 	json_object_object_add(json_binding, "symbols", symbols);
 	json_object_object_add(json_binding, "symbol", symbol);
-	json_object_object_add(json_binding, "input_type", binding->type == BINDING_MOUSE ?
-			json_object_new_string("mouse") : json_object_new_string("keyboard"));
+
+	bool mouse = binding->type == BINDING_MOUSECODE ||
+		binding->type == BINDING_MOUSESYM;
+	json_object_object_add(json_binding, "input_type", mouse
+			? json_object_new_string("mouse")
+			: json_object_new_string("keyboard"));
 
 	json_object *json = json_object_new_object();
 	json_object_object_add(json, "change", json_object_new_string("run"));
@@ -664,7 +664,7 @@ void ipc_client_handle_command(struct ipc_client *client) {
 	{
 		// TODO: Check if they're permitted to use these events
 		struct json_object *request = json_tokener_parse(buf);
-		if (request == NULL) {
+		if (request == NULL || !json_object_is_type(request, json_type_array)) {
 			const char msg[] = "{\"success\": false}";
 			client_valid = ipc_send_reply(client, msg, strlen(msg));
 			wlr_log(WLR_INFO, "Failed to parse subscribe request");
@@ -835,6 +835,14 @@ void ipc_client_handle_command(struct ipc_client *client) {
 		json_object_put(json); // free
 		goto exit_cleanup;
     }
+
+	case IPC_SYNC:
+	{
+		// It was decided sway will not support this, just return success:false
+		const char msg[] = "{\"success\": false}";
+		ipc_send_reply(client, msg, strlen(msg));
+		goto exit_cleanup;
+	}
 
 	default:
 		wlr_log(WLR_INFO, "Unknown IPC command type %i", client->current_command);

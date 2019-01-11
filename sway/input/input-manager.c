@@ -49,7 +49,7 @@ char *input_device_get_identifier(struct wlr_input_device *device) {
 	int vendor = device->vendor;
 	int product = device->product;
 	char *name = strdup(device->name);
-	name = strip_whitespace(name);
+	strip_whitespace(name);
 
 	char *p = name;
 	for (; *p; ++p) {
@@ -82,16 +82,29 @@ static struct sway_input_device *input_sway_device_from_wlr(
 	return NULL;
 }
 
-static bool input_has_seat_configuration(void) {
+static bool input_has_seat_fallback_configuration(void) {
 	struct sway_seat *seat = NULL;
 	wl_list_for_each(seat, &server.input->seats, link) {
 		struct seat_config *seat_config = seat_get_config(seat);
-		if (seat_config) {
+		if (seat_config && strcmp(seat_config->name, "*") != 0
+				&& seat_config->fallback != -1) {
 			return true;
 		}
 	}
 
 	return false;
+}
+
+void input_manager_verify_fallback_seat(void) {
+	struct sway_seat *seat = NULL;
+	if (!input_has_seat_fallback_configuration()) {
+		wlr_log(WLR_DEBUG, "no fallback seat config - creating default");
+		seat = input_manager_get_default_seat();
+		struct seat_config *sc = new_seat_config(seat->wlr_seat->name);
+		sc->fallback = true;
+		sc = store_seat_config(sc);
+		input_manager_apply_seat_config(sc);
+	}
 }
 
 static void input_manager_libinput_config_keyboard(
@@ -295,15 +308,10 @@ static void handle_new_input(struct wl_listener *listener, void *data) {
 	wl_signal_add(&device->events.destroy, &input_device->device_destroy);
 	input_device->device_destroy.notify = handle_device_destroy;
 
-	struct sway_seat *seat = NULL;
-	if (!input_has_seat_configuration()) {
-		wlr_log(WLR_DEBUG, "no seat configuration, using default seat");
-		seat = input_manager_get_default_seat();
-		seat_add_device(seat, input_device);
-		return;
-	}
+	input_manager_verify_fallback_seat();
 
 	bool added = false;
+	struct sway_seat *seat = NULL;
 	wl_list_for_each(seat, &input->seats, link) {
 		struct seat_config *seat_config = seat_get_config(seat);
 		bool has_attachment = seat_config &&
@@ -459,14 +467,25 @@ void input_manager_apply_input_config(struct input_config *input_config) {
 }
 
 void input_manager_apply_seat_config(struct seat_config *seat_config) {
-	wlr_log(WLR_DEBUG, "applying new seat config for seat %s",
-		seat_config->name);
-	struct sway_seat *seat = input_manager_get_seat(seat_config->name);
-	if (!seat) {
-		return;
+	wlr_log(WLR_DEBUG, "applying seat config for seat %s", seat_config->name);
+	if (strcmp(seat_config->name, "*") == 0) {
+		struct sway_seat *seat = NULL;
+		wl_list_for_each(seat, &server.input->seats, link) {
+			// Only apply the wildcard config directly if there is no seat
+			// specific config
+			struct seat_config *sc = seat_get_config(seat);
+			if (!sc) {
+				sc = seat_config;
+			}
+			seat_apply_config(seat, sc);
+		}
+	} else {
+		struct sway_seat *seat = input_manager_get_seat(seat_config->name);
+		if (!seat) {
+			return;
+		}
+		seat_apply_config(seat, seat_config);
 	}
-
-	seat_apply_config(seat, seat_config);
 
 	// for every device, try to add it to a seat and if no seat has it
 	// attached, add it to the fallback seats.

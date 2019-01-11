@@ -46,6 +46,7 @@ pango          = dependency('pango')
 pangocairo     = dependency('pangocairo')
 gdk_pixbuf     = dependency('gdk-pixbuf-2.0', required: false)
 pixman         = dependency('pixman-1')
+libevdev       = dependency('libevdev')
 libinput       = dependency('libinput', version: '>=1.6.0')
 libpam         = cc.find_library('pam', required: false)
 crypt          = cc.find_library('crypt', required: false)
@@ -65,6 +66,7 @@ endif
 conf_data.set10('HAVE_GDK_PIXBUF', gdk_pixbuf.found())
 conf_data.set10('HAVE_SYSTEMD', systemd.found())
 conf_data.set10('HAVE_ELOGIND', elogind.found())
+conf_data.set10('HAVE_TRAY', get_option('enable-tray') and (systemd.found() or elogind.found()))
 
 if not systemd.found() and not elogind.found()
 	warning('The sway binary must be setuid when compiled without (e)logind')
@@ -211,6 +213,7 @@ endif
 if (get_option('bash-completions'))
 	bash_files = files(
 		'completions/bash/sway',
+		'completions/bash/swaybar',
 		'completions/bash/swayidle',
 		'completions/bash/swaylock',
 		'completions/bash/swaymsg',

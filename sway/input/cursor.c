@@ -1,12 +1,11 @@
 #define _POSIX_C_SOURCE 200809L
 #include <math.h>
-#ifdef __linux__
+#include <libevdev/libevdev.h>
 #include <linux/input-event-codes.h>
-#elif __FreeBSD__
-#include <dev/evdev/input-event-codes.h>
-#endif
+#include <errno.h>
 #include <float.h>
 #include <limits.h>
+#include <strings.h>
 #include <wlr/types/wlr_cursor.h>
 #include <wlr/types/wlr_xcursor_manager.h>
 #include <wlr/types/wlr_idle.h>
@@ -88,6 +87,10 @@ static struct sway_node *node_at_coords(
 		return NULL;
 	}
 	struct sway_output *output = wlr_output->data;
+	if (!output) {
+		// output is being destroyed
+		return NULL;
+	}
 	double ox = lx, oy = ly;
 	wlr_output_layout_output_coords(root->output_layout, wlr_output, &ox, &oy);
 
@@ -383,6 +386,30 @@ static void handle_move_tiling_motion(struct sway_seat *seat,
 	desktop_damage_box(&seat->op_drop_box);
 }
 
+static void handle_move_tiling_threshold_motion(struct sway_seat *seat,
+		struct sway_cursor *cursor) {
+	double cx = seat->cursor->cursor->x;
+	double cy = seat->cursor->cursor->y;
+	double sx = seat->op_ref_lx;
+	double sy = seat->op_ref_ly;
+
+	// Get the scaled threshold for the output. Even if the operation goes
+	// across multiple outputs of varying scales, just use the scale for the
+	// output that the cursor is currently on for simplicity.
+	struct wlr_output *wlr_output = wlr_output_layout_output_at(
+			root->output_layout, cx, cy);
+	double output_scale = wlr_output ? wlr_output->scale : 1;
+	double threshold = config->tiling_drag_threshold * output_scale;
+	threshold *= threshold;
+
+	// If the threshold has been exceeded, start the actual drag
+	if ((cx - sx) * (cx - sx) + (cy - sy) * (cy - sy) > threshold) {
+		seat->operation = OP_MOVE_TILING;
+		cursor_set_image(cursor, "grab", NULL);
+		handle_move_tiling_motion(seat, cursor);
+	}
+}
+
 static void calculate_floating_constraints(struct sway_container *con,
 		int *min_width, int *max_width, int *min_height, int *max_height) {
 	if (config->floating_minimum_width == -1) { // no minimum
@@ -589,6 +616,50 @@ void cursor_rebase(struct sway_cursor *cursor) {
 	cursor_do_rebase(cursor, time_msec, cursor->previous.node, surface, sx, sy);
 }
 
+static int hide_notify(void *data) {
+	struct sway_cursor *cursor = data;
+	wlr_cursor_set_image(cursor->cursor, NULL, 0, 0, 0, 0, 0, 0);
+	cursor->hidden = true;
+	return 1;
+}
+
+int cursor_get_timeout(struct sway_cursor *cursor){
+	struct seat_config *sc = seat_get_config(cursor->seat);
+	if (!sc) {
+		sc = seat_get_config_by_name("*");
+	}
+	int timeout = sc ? sc->hide_cursor_timeout : 0;
+	if (timeout < 0) {
+		timeout = 0;
+	}
+	return timeout;
+}
+
+void cursor_handle_activity(struct sway_cursor *cursor) {
+	wl_event_source_timer_update(
+			cursor->hide_source, cursor_get_timeout(cursor));
+
+	wlr_idle_notify_activity(server.idle, cursor->seat->wlr_seat);
+	if (cursor->hidden) {
+		cursor_unhide(cursor);
+	}
+}
+
+void cursor_unhide(struct sway_cursor *cursor) {
+	cursor->hidden = false;
+	if (cursor->image_surface) {
+		cursor_set_image_surface(cursor,
+				cursor->image_surface,
+				cursor->hotspot_x,
+				cursor->hotspot_y,
+				cursor->image_client);
+	} else {
+		const char *image = cursor->image;
+		cursor->image = NULL;
+		cursor_set_image(cursor, image, cursor->image_client);
+	}
+}
+
 void cursor_send_pointer_motion(struct sway_cursor *cursor,
 		uint32_t time_msec) {
 	if (time_msec == 0) {
@@ -605,6 +676,9 @@ void cursor_send_pointer_motion(struct sway_cursor *cursor,
 			break;
 		case OP_MOVE_FLOATING:
 			handle_move_floating_motion(seat, cursor);
+			break;
+		case OP_MOVE_TILING_THRESHOLD:
+			handle_move_tiling_threshold_motion(seat, cursor);
 			break;
 		case OP_MOVE_TILING:
 			handle_move_tiling_motion(seat, cursor);
@@ -679,11 +753,11 @@ void cursor_send_pointer_motion(struct sway_cursor *cursor,
 
 static void handle_cursor_motion(struct wl_listener *listener, void *data) {
 	struct sway_cursor *cursor = wl_container_of(listener, cursor, motion);
-	wlr_idle_notify_activity(server.idle, cursor->seat->wlr_seat);
 	struct wlr_event_pointer_motion *event = data;
 	wlr_cursor_move(cursor->cursor, event->device,
 		event->delta_x, event->delta_y);
 	cursor_send_pointer_motion(cursor, event->time_msec);
+	cursor_handle_activity(cursor);
 	transaction_commit_dirty();
 }
 
@@ -691,10 +765,10 @@ static void handle_cursor_motion_absolute(
 		struct wl_listener *listener, void *data) {
 	struct sway_cursor *cursor =
 		wl_container_of(listener, cursor, motion_absolute);
-	wlr_idle_notify_activity(server.idle, cursor->seat->wlr_seat);
 	struct wlr_event_pointer_motion_absolute *event = data;
 	wlr_cursor_warp_absolute(cursor->cursor, event->device, event->x, event->y);
 	cursor_send_pointer_motion(cursor, event->time_msec);
+	cursor_handle_activity(cursor);
 	transaction_commit_dirty();
 }
 
@@ -798,6 +872,11 @@ void dispatch_cursor_button(struct sway_cursor *cursor,
 		if (button == cursor->seat->op_button && state == WLR_BUTTON_RELEASED) {
 			seat_end_mouse_operation(seat);
 			seat_pointer_notify_button(seat, time_msec, button, state);
+		}
+		if (state == WLR_BUTTON_PRESSED) {
+			state_add_button(cursor, button);
+		} else {
+			state_erase_button(cursor, button);
 		}
 		return;
 	}
@@ -942,10 +1021,24 @@ void dispatch_cursor_button(struct sway_cursor *cursor,
 	}
 
 	// Handle moving a tiling container
-	if (config->tiling_drag && mod_pressed && state == WLR_BUTTON_PRESSED &&
-			!is_floating_or_child && cont && !cont->is_fullscreen) {
+	if (config->tiling_drag && (mod_pressed || on_titlebar) &&
+			state == WLR_BUTTON_PRESSED && !is_floating_or_child &&
+			cont && !cont->is_fullscreen) {
+		struct sway_container *focus = seat_get_focused_container(seat);
+		bool focused = focus == cont || container_has_ancestor(focus, cont);
+		if (on_titlebar && !focused) {
+			node = seat_get_focus_inactive(seat, &cont->node);
+			seat_set_focus(seat, node);
+		}
+
 		seat_pointer_notify_button(seat, time_msec, button, state);
-		seat_begin_move_tiling(seat, cont, button);
+
+		// If moving a container by it's title bar, use a threshold for the drag
+		if (!mod_pressed && config->tiling_drag_threshold > 0) {
+			seat_begin_move_tiling_threshold(seat, cont, button);
+		} else {
+			seat_begin_move_tiling(seat, cont, button);
+		}
 		return;
 	}
 
@@ -970,11 +1063,23 @@ void dispatch_cursor_button(struct sway_cursor *cursor,
 
 static void handle_cursor_button(struct wl_listener *listener, void *data) {
 	struct sway_cursor *cursor = wl_container_of(listener, cursor, button);
-	wlr_idle_notify_activity(server.idle, cursor->seat->wlr_seat);
 	struct wlr_event_pointer_button *event = data;
 	dispatch_cursor_button(cursor, event->device,
 			event->time_msec, event->button, event->state);
+	cursor_handle_activity(cursor);
 	transaction_commit_dirty();
+}
+
+static uint32_t wl_axis_to_button(struct wlr_event_pointer_axis *event) {
+	switch (event->orientation) {
+	case WLR_AXIS_ORIENTATION_VERTICAL:
+		return event->delta < 0 ? SWAY_SCROLL_UP : SWAY_SCROLL_DOWN;
+	case WLR_AXIS_ORIENTATION_HORIZONTAL:
+		return event->delta < 0 ? SWAY_SCROLL_LEFT : SWAY_SCROLL_RIGHT;
+	default:
+		wlr_log(WLR_DEBUG, "Unknown axis orientation");
+		return 0;
+	}
 }
 
 static void dispatch_cursor_axis(struct sway_cursor *cursor,
@@ -993,11 +1098,34 @@ static void dispatch_cursor_axis(struct sway_cursor *cursor,
 	enum wlr_edges edge = cont ? find_edge(cont, cursor) : WLR_EDGE_NONE;
 	bool on_border = edge != WLR_EDGE_NONE;
 	bool on_titlebar = cont && !on_border && !surface;
+	bool on_titlebar_border = cont && on_border &&
+		cursor->cursor->y < cont->content_y;
+	bool on_contents = cont && !on_border && surface;
 	float scroll_factor =
 		(ic == NULL || ic->scroll_factor == FLT_MIN) ? 1.0f : ic->scroll_factor;
 
-	// Scrolling on a tabbed or stacked title bar
-	if (on_titlebar) {
+	bool handled = false;
+
+	// Gather information needed for mouse bindings
+	struct wlr_keyboard *keyboard = wlr_seat_get_keyboard(seat->wlr_seat);
+	uint32_t modifiers = keyboard ? wlr_keyboard_get_modifiers(keyboard) : 0;
+	struct wlr_input_device *device = input_device->wlr_device;
+	char *dev_id = device ? input_device_get_identifier(device) : strdup("*");
+	uint32_t button = wl_axis_to_button(event);
+
+	// Handle mouse bindings - x11 mouse buttons 4-7 - press event
+	struct sway_binding *binding = NULL;
+	state_add_button(cursor, button);
+	binding = get_active_mouse_binding(cursor,
+		config->current_mode->mouse_bindings, modifiers, false,
+		on_titlebar, on_border, on_contents, dev_id);
+	if (binding) {
+		seat_execute_command(seat, binding);
+		handled = true;
+	}
+
+	// Scrolling on a tabbed or stacked title bar (handled as press event)
+	if (!handled && (on_titlebar || on_titlebar_border)) {
 		enum sway_container_layout layout = container_parent_layout(cont);
 		if (layout == L_TABBED || layout == L_STACKED) {
 			struct sway_node *tabcontainer = node_get_parent(node);
@@ -1024,20 +1152,33 @@ static void dispatch_cursor_axis(struct sway_cursor *cursor,
 				seat_set_raw_focus(seat, new_focus);
 				seat_set_raw_focus(seat, old_focus);
 			}
-			return;
+			handled = true;
 		}
 	}
 
-	wlr_seat_pointer_notify_axis(cursor->seat->wlr_seat, event->time_msec,
-		event->orientation, scroll_factor * event->delta,
-		round(scroll_factor * event->delta_discrete), event->source);
+	// Handle mouse bindings - x11 mouse buttons 4-7 - release event
+	binding = get_active_mouse_binding(cursor,
+		config->current_mode->mouse_bindings, modifiers, true,
+		on_titlebar, on_border, on_contents, dev_id);
+	state_erase_button(cursor, button);
+	if (binding) {
+		seat_execute_command(seat, binding);
+		handled = true;
+	}
+	free(dev_id);
+
+	if (!handled) {
+		wlr_seat_pointer_notify_axis(cursor->seat->wlr_seat, event->time_msec,
+			event->orientation, scroll_factor * event->delta,
+			round(scroll_factor * event->delta_discrete), event->source);
+	}
 }
 
 static void handle_cursor_axis(struct wl_listener *listener, void *data) {
 	struct sway_cursor *cursor = wl_container_of(listener, cursor, axis);
-	wlr_idle_notify_activity(server.idle, cursor->seat->wlr_seat);
 	struct wlr_event_pointer_axis *event = data;
 	dispatch_cursor_axis(cursor, event);
+	cursor_handle_activity(cursor);
 	transaction_commit_dirty();
 }
 
@@ -1228,10 +1369,8 @@ static void handle_request_set_cursor(struct wl_listener *listener,
 		return;
 	}
 
-	wlr_cursor_set_surface(cursor->cursor, event->surface, event->hotspot_x,
-		event->hotspot_y);
-	cursor->image = NULL;
-	cursor->image_client = focused_client;
+	cursor_set_image_surface(cursor, event->surface, event->hotspot_x,
+			event->hotspot_y, focused_client);
 }
 
 void cursor_set_image(struct sway_cursor *cursor, const char *image,
@@ -1239,20 +1378,51 @@ void cursor_set_image(struct sway_cursor *cursor, const char *image,
 	if (!(cursor->seat->wlr_seat->capabilities & WL_SEAT_CAPABILITY_POINTER)) {
 		return;
 	}
+
+	const char *current_image = cursor->image;
+	cursor->image = image;
+	cursor->image_surface = NULL;
+	cursor->hotspot_x = cursor->hotspot_y = 0;
+	cursor->image_client = client;
+
+	if (cursor->hidden) {
+		return;
+	}
+
 	if (!image) {
 		wlr_cursor_set_image(cursor->cursor, NULL, 0, 0, 0, 0, 0, 0);
-	} else if (!cursor->image || strcmp(cursor->image, image) != 0) {
+	} else if (!current_image || strcmp(current_image, image) != 0) {
 		wlr_xcursor_manager_set_cursor_image(cursor->xcursor_manager, image,
 				cursor->cursor);
 	}
-	cursor->image = image;
+}
+
+void cursor_set_image_surface(struct sway_cursor *cursor,
+		struct wlr_surface *surface, int32_t hotspot_x, int32_t hotspot_y,
+		struct wl_client *client) {
+	if (!(cursor->seat->wlr_seat->capabilities & WL_SEAT_CAPABILITY_POINTER)) {
+		return;
+	}
+
+	cursor->image = NULL;
+	cursor->image_surface = surface;
+	cursor->hotspot_x = hotspot_x;
+	cursor->hotspot_y = hotspot_y;
 	cursor->image_client = client;
+
+	if (cursor->hidden) {
+		return;
+	}
+
+	wlr_cursor_set_surface(cursor->cursor, surface, hotspot_x, hotspot_y);
 }
 
 void sway_cursor_destroy(struct sway_cursor *cursor) {
 	if (!cursor) {
 		return;
 	}
+
+	wl_event_source_remove(cursor->hide_source);
 
 	wlr_xcursor_manager_destroy(cursor->xcursor_manager);
 	wlr_cursor_destroy(cursor->cursor);
@@ -1276,6 +1446,9 @@ struct sway_cursor *sway_cursor_create(struct sway_seat *seat) {
 
 	cursor->seat = seat;
 	wlr_cursor_attach_output_layout(wlr_cursor, root->output_layout);
+
+	cursor->hide_source = wl_event_loop_add_timer(server.wl_event_loop,
+			hide_notify, cursor);
 
 	// input events
 	wl_signal_add(&wlr_cursor->events.motion, &cursor->motion);
@@ -1361,4 +1534,67 @@ void cursor_warp_to_workspace(struct sway_cursor *cursor,
 	double y = workspace->y + workspace->height / 2.0;
 
 	wlr_cursor_warp(cursor->cursor, NULL, x, y);
+}
+
+uint32_t get_mouse_bindsym(const char *name, char **error) {
+	if (strncasecmp(name, "button", strlen("button")) == 0) {
+		// Map to x11 mouse buttons
+		int number = name[strlen("button")] - '0';
+		if (number < 1 || number > 9 || strlen(name) > strlen("button0")) {
+			*error = strdup("Only buttons 1-9 are supported. For other mouse "
+					"buttons, use the name of the event code.");
+			return 0;
+		}
+		static const uint32_t buttons[] = {BTN_LEFT, BTN_MIDDLE, BTN_RIGHT,
+			SWAY_SCROLL_UP, SWAY_SCROLL_DOWN, SWAY_SCROLL_LEFT,
+			SWAY_SCROLL_RIGHT, BTN_SIDE, BTN_EXTRA};
+		return buttons[number - 1];
+	} else if (strncmp(name, "BTN_", strlen("BTN_")) == 0) {
+		// Get event code from name
+		int code = libevdev_event_code_from_name(EV_KEY, name);
+		if (code == -1) {
+			size_t len = snprintf(NULL, 0, "Unknown event %s", name) + 1;
+			*error = malloc(len);
+			if (*error) {
+				snprintf(*error, len, "Unknown event %s", name);
+			}
+			return 0;
+		}
+		return code;
+	}
+	return 0;
+}
+
+uint32_t get_mouse_bindcode(const char *name, char **error) {
+	// Validate event code
+	errno = 0;
+	char *endptr;
+	int code = strtol(name, &endptr, 10);
+	if (endptr == name && code <= 0) {
+		*error = strdup("Button event code must be a positive integer.");
+		return 0;
+	} else if (errno == ERANGE) {
+		*error = strdup("Button event code out of range.");
+		return 0;
+	}
+	const char *event = libevdev_event_code_get_name(EV_KEY, code);
+	if (!event || strncmp(event, "BTN_", strlen("BTN_")) != 0) {
+		size_t len = snprintf(NULL, 0, "Event code %d (%s) is not a button",
+				code, event) + 1;
+		*error = malloc(len);
+		if (*error) {
+			snprintf(*error, len, "Event code %d (%s) is not a button",
+					code, event);
+		}
+		return 0;
+	}
+	return code;
+}
+
+uint32_t get_mouse_button(const char *name, char **error) {
+	uint32_t button = get_mouse_bindsym(name, error);
+	if (!button && !error) {
+		button = get_mouse_bindcode(name, error);
+	}
+	return button;
 }

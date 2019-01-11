@@ -64,7 +64,7 @@ static struct sway_output *output_in_direction(const char *direction_string,
 		}
 	}
 
-	return output_by_name(direction_string);
+	return output_by_name_or_id(direction_string);
 }
 
 static bool is_parallel(enum sway_container_layout layout,
@@ -154,6 +154,8 @@ static void container_move_to_container_from_direction(
 static void container_move_to_workspace_from_direction(
 		struct sway_container *container, struct sway_workspace *workspace,
 		enum wlr_direction move_dir) {
+	container->width = container->height = 0;
+
 	if (is_parallel(workspace->layout, move_dir)) {
 		wlr_log(WLR_DEBUG, "Reparenting container (parallel)");
 		int index =
